@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo Live - Transmissão</title>
+    <style>
+        body{
+            background: #1e1f22;
+            color: white;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 30px;
+            text-align: center;
+        }
+        video{
+            display: block;
+            background: #111;
+            width: 100%;
+            max-width: 960px;
+            aspect-ratio:  16/9;
+            object-fit: contain;
+            margin: 20px auto;
+            border-radius: 10px;
+        }
+        button {
+            padding: 12px 20px;
+            margin: 5px;
+            border: 0;
+            border-radius: 6px;
+            background: #5865f2;
+            color: white;
+            cursor: pointer;
+        }
+        button:disabled{
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        #stop {
+            background: #da373c;
+        }
+    </style>
+</head>
+<body>
+    <h1>Demo live</h1>
+    <p>Compartilhe sua tela pelo navegador</p>
+
+    <button id="start">Iniciar captura</button>
+    <button id="stop" disabled>Parar captura</button>
+
+    <p id="status">Nenhuma tela sendo capturada.</p>
+    <p id="info"></p>
+
+    <video id="preview" autoplay muted playsinline></video>
+
+    <script type="module" src="./src/transmitir.js"></script>
+</body>
+</html>
