@@ -3,13 +3,36 @@ let callbackId = null
 let ativo = false
 let framesCodificados = 0
 let forceKeyframe = false
+let ultimoCanvas = null
+let canvasTemImagem = false
+let ultimoTimestamp = -1
 
 export function solicitarKeyframe(){
-    if(!ativo) return
+    if(!ativo || !encoder || encoder.state !== "configured") return
 
     forceKeyframe = true
 
-    console.log("[Encoder] Novo keyframe solicitado pelo servidor")
+    if(!ultimoCanvas || !canvasTemImagem || encoder.encodeQueueSize > 2) return
+
+    const timestamp = Math.max(Math.round(performance.now() * 1000), ultimoTimestamp + 1)
+    const frame = new VideoFrame(ultimoCanvas, {
+        timestamp
+    })
+
+    try{
+        encoder.encode(frame, {
+            keyFrame: true
+        })
+
+        ultimoTimestamp = timestamp
+        forceKeyframe = false
+        console.log("[Encoder] Novo keyframe solicitado pelo servidor")
+    }catch(e){
+        console.error("[Encoder] Erro ao solicitar keyframe.", e)
+    }finally{
+        frame.close()
+    }
+
 }
 
 export async function iniciarEnvioVideo(preview, socket){
@@ -34,6 +57,10 @@ export async function iniciarEnvioVideo(preview, socket){
     const canvas = document.createElement("canvas")
     canvas.width = config.width
     canvas.height = config.height
+
+    ultimoCanvas = canvas
+    canvasTemImagem = false
+    ultimoTimestamp = -1
 
     const ctx = canvas.getContext("2d", { alpha: false })
 
@@ -108,21 +135,26 @@ export async function iniciarEnvioVideo(preview, socket){
         ctx.fillRect(0, 0, canvas.width, canvas.height)
         ctx.drawImage(preview, x, y, largura, altura)
 
+        canvasTemImagem = true
+
+        const timestamp = Math.max(Math.round(performance.now() * 1000), ultimoTimestamp + 1)
+
         const frame = new VideoFrame(canvas, {
-            timestamp: Math.round(performance.now() * 1000)
+            timestamp
         })
 
         try{
 
             const keyframe = forceKeyframe || quantidadeFrames % 60 === 0 
             encoder.encode(frame, {
-                keyframe
+                keyFrame:keyframe
             })
 
             if(keyframe){
                 console.log("[Encoder] Keyframe solicitado ao codificador")
             }
 
+            ultimoTimestamp = timestamp
             forceKeyframe = false
             quantidadeFrames++
         }finally {
@@ -136,6 +168,11 @@ export async function iniciarEnvioVideo(preview, socket){
 
 export function pararEnvioVideo(preview){
     ativo = false
+
+    ultimoCanvas = null
+    canvasTemImagem = false
+    ultimoTimestamp = -1
+    forceKeyframe = false
 
     if(callbackId !== null){
         preview.cancelVideoFrameCallback(callbackId)

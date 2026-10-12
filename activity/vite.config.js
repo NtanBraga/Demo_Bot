@@ -4,7 +4,7 @@ export default defineConfig({
     server: {
         strictPort: true,
         allowedHosts: [
-            "results-curriculum-earl-makeup.trycloudflare.com"
+            "surf-informed-streets-spent.trycloudflare.com"
         ],
         proxy: {
             "/ws": {
