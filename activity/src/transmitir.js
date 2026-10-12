@@ -11,7 +11,7 @@ const streamsElements = document.getElementById("streams")
 
 let captureStream = null
 
-const protocol = window.location.protocol === "https" ? "wss:" : "ws:"
+const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
 const socket = new WebSocket(`${protocol}//${window.location.host}/ws`)
 
 startButton.disabled = true
@@ -78,7 +78,7 @@ socket.addEventListener("close", () => {
 
     connection.textContent = "Servidor desconectado."
     startButton.disabled = true
-    atualizarLista()
+    atualizarLista([])
 })
 
 socket.addEventListener("error", (error) => {
@@ -125,7 +125,7 @@ async function iniciarCaptura() {
 
 
         statusHTML.textContent = "Captura ativa."
-        stopButton.disabled = true
+        stopButton.disabled = false
 
         videoTrack.addEventListener("ended", pararCaptura)
 
