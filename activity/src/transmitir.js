@@ -1,3 +1,5 @@
+import { iniciarEnvioVideo, pararEnvioVideo, solicitarKeyframe } from "./videoSender"
+
 const startButton = document.getElementById("start")
 const stopButton = document.getElementById("stop")
 
@@ -65,14 +67,22 @@ socket.addEventListener("message", (event) => {
         case "live:list":
             atualizarLista(mensagem.streams)
             break
+        case "media:request-keyframe":
+            console.log("[Demo Live] Servidor solicitor keyframe")
+            solicitarKeyframe()
+            break
         case "error":
             console.error("[Servidor]", mensagem.message)
             break
     }
 })
 
-socket.addEventListener("close", () => {
-    console.log("[Demo Live] Websocket desconectado.")
+socket.addEventListener("close", (event) => {
+    console.log("[Demo Live] Websocket desconectado: ", {
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean
+    })
 
     pararCaptura()
 
@@ -123,6 +133,7 @@ async function iniciarCaptura() {
             throw new Error("Não foi possivel avisar o servidor")
         }
 
+        await iniciarEnvioVideo(preview, socket)
 
         statusHTML.textContent = "Captura ativa."
         stopButton.disabled = false
@@ -142,6 +153,8 @@ async function iniciarCaptura() {
 }
 function pararCaptura(){
     const estavaCapturando = captureStream !== null
+
+    pararEnvioVideo(preview)
 
     if(captureStream) {
         captureStream.getTracks().forEach(track => track.stop())
