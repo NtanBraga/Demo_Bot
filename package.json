@@ -1,0 +1,89 @@
+{
+  "name": "jugnu-music",
+  "version": "1.0.0",
+  "description": "Ultra-fast, high-performance Discord music bot powered by DisTube & discord.js v14 — YouTube, Spotify, SoundCloud, 24/7, Autoresume, custom playlists, and LRU cache.",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "allowScripts": {
+    "@discordjs/opus": true,
+    "@distube/yt-dlp": true,
+    "erlpack": true,
+    "zlib-sync": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kabirjaipal/JUGNU-MUSIC.git"
+  },
+  "keywords": [
+    "discord",
+    "discord-bot",
+    "discord-music-bot",
+    "music-bot",
+    "distube",
+    "distube-v5",
+    "discord.js",
+    "discordjs-v14",
+    "slash-commands",
+    "yt-dlp",
+    "youtube",
+    "spotify",
+    "soundcloud",
+    "lyrics",
+    "queue",
+    "playlist",
+    "filters",
+    "autoplay",
+    "24-7",
+    "auto-resume",
+    "dj",
+    "ffmpeg",
+    "lru-cache",
+    "high-performance",
+    "nodejs",
+    "self-hosted",
+    "open-source"
+  ],
+  "author": "Kabir Jaipal",
+  "license": "MIT",
+  "funding": "https://github.com/sponsors/kabirjaipal",
+  "bugs": {
+    "url": "https://github.com/kabirjaipal/JUGNU-MUSIC/issues"
+  },
+  "homepage": "https://github.com/kabirjaipal/JUGNU-MUSIC#readme",
+  "engines": {
+    "node": ">=18.17.0",
+    "npm": ">=9"
+  },
+  "dependencies": {
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/voice": "^0.19.2",
+    "@distube/soundcloud": "^2.0.4",
+    "@distube/spotify": "^2.0.2",
+    "@distube/youtube": "^1.0.4",
+    "@distube/yt-dlp": "^2.0.1",
+    "@distube/ytsr": "^2.0.4",
+    "@joshdb/core": "^1.2.7",
+    "@joshdb/json": "^1.0.5",
+    "@joshdb/mongo": "^1.1.6",
+    "@snazzah/davey": "^0.1.12",
+    "cors": "^2.8.6",
+    "discord.js": "^14.27.0",
+    "distube": "^5.2.3",
+    "dotenv": "^17.4.2",
+    "erlpack": "^0.1.4",
+    "express": "^5.2.1",
+    "libsodium-wrappers": "^0.8.4",
+    "mongoose": "^9.9.3",
+    "opusscript": "^0.1.1",
+    "simple-find-lyrics": "^0.0.1",
+    "sodium-native": "^5.1.0",
+    "systeminformation": "^5.33.1",
+    "tweetnacl": "^1.0.3",
+    "yt-search": "^2.13.1",
+    "zlib-sync": "^0.1.10"
+  }
+}
