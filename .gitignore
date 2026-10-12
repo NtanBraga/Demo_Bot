@@ -5,3 +5,6 @@ data
 package-lock.json
 yarn.lock
 test.js
+activity/node_modules
+activity/.env.local
+!activity/package-lock.json
