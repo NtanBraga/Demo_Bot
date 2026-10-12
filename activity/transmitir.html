@@ -48,10 +48,18 @@
     <button id="start">Iniciar captura</button>
     <button id="stop" disabled>Parar captura</button>
 
-    <p id="status">Nenhuma tela sendo capturada.</p>
+    <p id="statusHTML">Nenhuma tela sendo capturada.</p>
     <p id="info"></p>
 
     <video id="preview" autoplay muted playsinline></video>
+
+    <hr>
+    <h3>Conexão com o servidor</h3>
+    <p id="connection">Conectando...</p>
+    <p id="client-id"></p>
+
+    <h3>Transmissões ativas</h3>
+    <ul id="streams"></ul>
 
     <script type="module" src="./src/transmitir.js"></script>
 </body>
