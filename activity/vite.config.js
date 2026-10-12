@@ -4,7 +4,7 @@ export default defineConfig({
     server: {
         strictPort: true,
         allowedHosts: [
-            "offering-supervision-latinas-institute.trycloudflare.com"
+            "results-curriculum-earl-makeup.trycloudflare.com"
         ],
         proxy: {
             "/ws": {

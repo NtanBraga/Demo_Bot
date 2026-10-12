@@ -4,11 +4,13 @@ const { WebSocketServer, WebSocket } = require("ws")
 
 const HOST = "127.0.0.1"
 const PORT = 3001
+const DISCORD_APP_ID = "1094793951946473583"
 
 //autorizado apenas testes locais
 const allowedOrigins = new Set([
     "http://localhost:5173",
-    "http://127.0.0.1:5173"
+    "http://127.0.0.1:5173",
+    `https://${DISCORD_APP_ID}.discordsays.com`
 ])
 
 const server = http.createServer((_req, res) => {
@@ -24,6 +26,11 @@ const wss = new WebSocketServer({
 
 server.on("upgrade", (request, socket, head) => {
     const path = new URL(request.url, "http://localhost").pathname
+
+    console.log("[Demo Live] Tentativa de conexão: ", {
+        path,
+        origin: request.headers.origin
+    })
 
     if(path !== "/ws" || !allowedOrigins.has(request.headers.origin)){
         socket.write("HTTP/1.1 403 Forbidden\r\n" + "Connection: close \r\n\r\n")
