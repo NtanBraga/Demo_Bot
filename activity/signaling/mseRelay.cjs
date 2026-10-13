@@ -56,7 +56,7 @@ function atualizarContagemEspectadores(){
     console.log("[MSE] Espectadores conectados: ", total)
 
     const mensagem = {
-        type: "viewers.count",
+        type: "viewers:count",
         count: total
     }
 
@@ -197,6 +197,7 @@ wss.on("connection", ws => {
         const eraTransmissor = transmissor === ws
         const eraEspectador = espectadores.delete(ws)
         
+        if(eraEspectador) atualizarContagemEspectadores()
 
         if(eraTransmissor){
             transmissor = null

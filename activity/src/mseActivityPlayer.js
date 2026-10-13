@@ -10,6 +10,10 @@ export function montarPlayerMSE(container, clientId) {
             Informe a chave de visualização.
         </p>
 
+        <p id="mse-viewers">
+            Espectadores conectados: 0
+        </p>
+
         <input
             id="mse-key"
             type="password"
@@ -54,6 +58,7 @@ export function montarPlayerMSE(container, clientId) {
 
     const status = section.querySelector("#mse-status");
     const keyInput = section.querySelector("#mse-key");
+    const viewersLabel = section.querySelector("#mse-viewers")
     const connectButton = section.querySelector("#mse-connect");
     const disconnectButton = section.querySelector("#mse-disconnect");
     const video = section.querySelector("#mse-video");
@@ -116,6 +121,7 @@ export function montarPlayerMSE(container, clientId) {
         connectButton.disabled = false;
         disconnectButton.disabled = true;
 
+        viewersLabel.textContent = "Espectadores conectados: 0"
         status.textContent = "Desconectado.";
     }
 
@@ -293,7 +299,9 @@ export function montarPlayerMSE(container, clientId) {
                         "segmentos."
                     );
                     break;
-
+                case "viewers:count":
+                    viewersLabel.textContent = `Espectadores conectados: ${mensagem.count}`
+                    break
                 case "stream:ended":
                     limparMidia()
                     status.textContent = "Transmissão encerrada. Aguardando proxima."

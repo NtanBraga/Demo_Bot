@@ -6,8 +6,7 @@ const statusHTML = document.getElementById("statusHTML")
 const info = document.getElementById("info")
 
 const connection = document.getElementById("connection")
-const clientIdElement = document.getElementById("client-id")
-const streamsElements = document.getElementById("streams")
+const viewerCount = document.getElementById("viewer-count")
 
 let captureStream = null
 let recorder = null
@@ -24,25 +23,6 @@ function enviar(mensagem){
     socket.send(JSON.stringify(mensagem)) 
     
     return true
-}
-
-function atualizarLista(streams){
-    streamsElements.replaceChildren()
-
-    if(streams.length === 0){
-        const item = document.createElement("li")
-
-        item.textContent = "Nenhuma transmissão ativa."
-
-        streamsElements.appendChild(item)
-        return
-    }
-
-    for(const stream of streams){
-        const item = document.createElement("li")
-        item.textContent = `Transmissão: ${stream.id}`
-        streamsElements.appendChild(item)
-    }
 }
 
 socket.addEventListener("open", () => {
@@ -78,6 +58,10 @@ socket.addEventListener("message", (event) => {
             connection.textContent = "Autenticado no relay MSE"
             startButton.disabled = false
             break
+        case "viewers:count":
+            viewerCount.textContent = `Espectadores conectados: ${mensagem.count}`
+            console.log(`[Demo Live] Espectadores: ${mensagem.count}`)
+            break
         case "error":
             console.error("[Servidor]", mensagem.message)
             connection.textContent = `Erro: ${mensagem.message}`
@@ -97,7 +81,7 @@ socket.addEventListener("close", (event) => {
 
     connection.textContent = "Servidor desconectado."
     startButton.disabled = true
-    atualizarLista([])
+    viewerCount.textContent = "Espectadores conectados: 0"
 })
 
 socket.addEventListener("error", (error) => {
