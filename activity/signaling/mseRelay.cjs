@@ -1,6 +1,8 @@
 const { WebSocketServer, WebSocket } = require("ws")
 const { timingSafeEqual } = require("node:crypto")
-const { transcode } = require("node:buffer")
+const { criarInspectorWebM } = require("./webmInspector.cjs")
+const { criarHistoricoWebM } = require("./webHistory.cjs")
+const { default: cluster } = require("node:cluster")
 
 const wss = new WebSocketServer({
     host: "127.0.0.1",
@@ -9,6 +11,11 @@ const wss = new WebSocketServer({
     perMessageDeflate: false
 })
 
+let historico = criarHistoricoWebM()
+
+function limparHistorico(){
+    historico = criarHistoricoWebM()
+}
 
 const PUBLISH_KEY = process.env.DEMO_MSE_PUBLISH_KEY
 const VIEW_KEY = process.env.DEMO_MSE_VIEW_KEY
@@ -30,16 +37,12 @@ function negarAcesso(ws){
 }
 
 
+let inspectorWebM = null
+
 let transmissor = null
 const espectadores = new Set()
 
 let streamActive = false
-
-function limparHistorico(){
-    historico.length = 0
-    historicoBytes = 0
-    historicoCompleto = true
-}
 
 function avisarEspectadores(type){
     for(const espectador of espectadores){
@@ -47,12 +50,24 @@ function avisarEspectadores(type){
     }
 }
 
+function atualizarContagemEspectadores(){
+    const total = [...espectadores].filter(ws => ws.readyState === WebSocket.OPEN).length
 
-const MAX_HISTORICO = 8 * 1024 * 1024
+    console.log("[MSE] Espectadores conectados: ", total)
 
-const historico = []
-let historicoBytes = 0
-let historicoCompleto = true
+    const mensagem = {
+        type: "viewers.count",
+        count: total
+    }
+
+    if(transmissor){
+        enviar(transmissor, mensagem)
+    }
+
+    for(const espectador of espectadores){
+        enviar(espectador, mensagem)
+    }
+}
 
 function enviar(ws, mensagem){
     if(ws.readyState === WebSocket.OPEN){
@@ -67,18 +82,9 @@ wss.on("connection", ws => {
         if(isBinary){
             if(ws !== transmissor || !streamActive) return
 
-            if(historicoCompleto){
-                if(historicoBytes + data.length <= MAX_HISTORICO){
-                    historico.push(Buffer.from(data))
-                    historicoBytes += data.length
-                }else{
-                    historicoCompleto = false
-                    historico.length = 0
-                    historicoBytes = 0
+            inspectorWebM?.analisar(data)
 
-                    console.warn("[MSE] Limite do historico atingido." + "Novas entradas tardias serão recusadas")
-                }
-            }
+            historico.adicionar(data)
 
             for(const espectador of espectadores) {
                 if(espectador.readyState !== WebSocket.OPEN) continue
@@ -127,6 +133,8 @@ wss.on("connection", ws => {
                 streamActive = true
                 limparHistorico()
 
+                inspectorWebM = criarInspectorWebM()
+
                 avisarEspectadores("stream:reset")
 
                 console.log("[MSE] Nova transmissão iniciada.")
@@ -141,36 +149,45 @@ wss.on("connection", ws => {
                 console.log("[MSE] Transmissão encerrada.")
                 break
             case "viewer:join":
-
                 if(!validarChave(mensagem.token, VIEW_KEY)){
                     negarAcesso(ws)
                     break
                 }
 
-                if(transmissor && !historicoCompleto){
+                const replay = streamActive ? historico.obterReplay() : { partes: [], bytes: 0, clusters: 0}
+                
+                if(!replay){
                     enviar(ws, {
                         type: "error",
-                        message: "Historico indisponivel" + "Reinicie a transmissão para este teste"
+                        message: "Aguardando um Cluster com keyframe." +
+                        "Tente conectar novamente."
                     })
                     break
                 }
-
                 espectadores.add(ws)
-                console.log("[MSE] Espectadores: ", espectadores.size)
 
-                enviar(ws, {type: "viewer:ready", cachedChunks: historico.length})
+                enviar(ws, {
+                    type: "viewer:ready",
+                    cachedChunks: replay.partes.length,
+                    cachedBytes: replay.bytes
+                })
 
-                for(const segmento of historico){
-                    if(ws.readyState !== WebSocket.OPEN) break
-
-                    ws.send(segmento, { binary: true })
+                for(const parte of replay.partes){
+                    if(ws.readyState !== WebSocket.OPEN){
+                        break
+                    }
+                    ws.send(parte, { binary: true })
                 }
 
                 console.log("[MSE] Novo Espectador:", {
                     total: espectadores.size,
-                    segmentosRecuperados: historico.length,
-                    bytes: historicoBytes
+                    clustersRecuperados: replay.clusters,
+                    segmentosRecuperados: replay.partes.length,
+                    bytesEnviados: replay.bytes,
+                    bytesGuardados: historico.bytesGuardados
                 })
+
+                atualizarContagemEspectadores()
 
                 break
         }

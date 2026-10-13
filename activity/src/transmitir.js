@@ -1,5 +1,3 @@
-import { iniciarEnvioVideo, pararEnvioVideo, solicitarKeyframe } from "./videoSender"
-
 const startButton = document.getElementById("start")
 const stopButton = document.getElementById("stop")
 
@@ -12,9 +10,10 @@ const clientIdElement = document.getElementById("client-id")
 const streamsElements = document.getElementById("streams")
 
 let captureStream = null
+let recorder = null
 
 const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-const socket = new WebSocket(`${protocol}//${window.location.host}/ws`)
+const socket = new WebSocket(`${protocol}//${window.location.host}/ws-mse`)
 
 startButton.disabled = true
 stopButton.disabled = true
@@ -48,31 +47,41 @@ function atualizarLista(streams){
 
 socket.addEventListener("open", () => {
     console.log("[Demo Live] Websocket conectado.")
-    connection.textContent = "Conectado ao servidor."
-    startButton.disabled = false
+    connection.textContent = "Aguardando autenticação..."
+
+    const token = prompt("Chave de transmissão do DemoLive: ")
+
+    if(!token?.trim()){
+        connection.textContent = "Autenticação cancelada"
+        socket.close(1000, "Autenticação cancelada")
+        return
+    }
+
+    enviar({
+        type: "publisher:join",
+        token: token.trim()
+    })
 })
 
 socket.addEventListener("message", (event) => {
     let mensagem
     try{
         mensagem = JSON.parse(event.data)
+        console.log("[Demo Live] Mensagem recebida: ", mensagem.type)
     }catch{
         return
     }
 
     switch(mensagem.type) {
-        case "welcome": 
-            clientIdElement.textContent = `Seu ID temporario: ${mensagem.id}`
-            break
-        case "live:list":
-            atualizarLista(mensagem.streams)
-            break
-        case "media:request-keyframe":
-            console.log("[Demo Live] Servidor solicitor keyframe")
-            solicitarKeyframe()
+        case "publisher:ready":
+            console.log("[Demo Live] Transmissor autenticado")
+            connection.textContent = "Autenticado no relay MSE"
+            startButton.disabled = false
             break
         case "error":
             console.error("[Servidor]", mensagem.message)
+            connection.textContent = `Erro: ${mensagem.message}`
+            startButton.disabled = true
             break
     }
 })
@@ -109,7 +118,7 @@ async function iniciarCaptura() {
                 width: { ideal: 1920 },
                 height: { ideal: 1080 }
             },
-            audio: true
+            audio: false
         })
 
         if(socket.readyState !== WebSocket.OPEN){
@@ -129,11 +138,32 @@ async function iniciarCaptura() {
             `${settings.width}x${settings.height} | ` +
             `Audio: ${stream.getAudioTracks().length > 0 ? "Sim" : "Não"}`
         
-        if(!enviar({ type: "live:start" })){
-            throw new Error("Não foi possivel avisar o servidor")
-        }
+        const mimeType = "video/webm;codecs=vp8"
 
-        await iniciarEnvioVideo(preview, socket)
+        if(!MediaRecorder.isTypeSupported(mimeType))throw new Error("VP8/WebM não é suportado neste navegador.")
+        
+        recorder = new MediaRecorder(stream, {
+            mimeType,
+            videoBitsPerSecond: 1_500_000
+        })
+
+        recorder.addEventListener("start", () => {
+            enviar({ type: "stream:start" })
+        })
+
+        recorder.addEventListener("dataavailable", (event) => {
+            if(event.data.size === 0) return
+            if(socket.readyState !== WebSocket.OPEN) return
+            socket.send(event.data)
+        })
+
+        recorder.addEventListener("stop", () => {
+            enviar({ type: "stream:stop" })
+            finalizarCaptura()
+            console.log("Transmissão encerrada.")
+        })
+
+        recorder.start(1000)
 
         statusHTML.textContent = "Captura ativa."
         stopButton.disabled = false
@@ -151,30 +181,35 @@ async function iniciarCaptura() {
         }
     }
 }
-function pararCaptura(){
-    const estavaCapturando = captureStream !== null
 
-    pararEnvioVideo(preview)
-
-    if(captureStream) {
+function finalizarCaptura(){
+    if(captureStream){
         captureStream.getTracks().forEach(track => track.stop())
         captureStream = null
     }
 
+    recorder = null
+
     preview.pause()
     preview.srcObject = null
-
-    if(estavaCapturando) {
-        enviar({ type: "live:stop" })
-    }
 
     startButton.disabled = socket.readyState !== WebSocket.OPEN
     stopButton.disabled = true
 
     statusHTML.textContent = "Nenhuma tela sendo capturada."
     info.textContent = ""
+}
 
-    console.log("[Demo Live] Captura Encerrada")
+function pararCaptura(){
+    stopButton.disabled = true
+
+    if(recorder && recorder.state !== "inactive"){
+        recorder.stop()
+
+        statusHTML.textContent = "Finalizando transmissão..."
+        return
+    }
+    finalizarCaptura()
 }
 
 startButton.addEventListener("click", iniciarCaptura)

@@ -4,7 +4,7 @@ export default defineConfig({
     server: {
         strictPort: true,
         allowedHosts: [
-            "surf-informed-streets-spent.trycloudflare.com"
+            "thee-save-philip-appendix.trycloudflare.com"
         ],
         proxy: {
             "/ws-mse": {

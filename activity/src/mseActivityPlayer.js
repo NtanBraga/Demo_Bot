@@ -4,7 +4,7 @@ export function montarPlayerMSE(container, clientId) {
     section.innerHTML = `
         <hr>
 
-        <h3>Player MediaRecorder (teste)</h3>
+        <h3>Transmissão ao vivo</h3>
 
         <p id="mse-status">
             Informe a chave de visualização.
