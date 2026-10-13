@@ -1,3 +1,4 @@
+import { montarPlayerMSE } from './mseActivityPlayer'
 import './style.css'
 import { DiscordSDK } from "@discord/embedded-app-sdk"
 
@@ -241,6 +242,9 @@ async function iniciarActivity(){
     console.log("[Atividade] Guild ID: ", discordSDK.guildId)
 
     conectarWebSocket()
+
+    montarPlayerMSE(document.querySelector("#app main"), CLIENT_ID)
+
   }catch(e){
     console.error("[Atividade] Erro: ", e)
     discordStatus.textContent = "Não foi possivel conectar ao Discord"

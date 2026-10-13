@@ -1,0 +1,168 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Demo Live - Player MSE</title>
+    <style>
+        body {
+            background: #1e1f22;
+            color: white;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 20px;
+        }
+
+        video {
+            width: 100%;
+            max-width: 960px;
+            background: black;
+        }
+
+        pre {
+            text-align: left;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h2>Demo Live - Player experimental</h2>
+
+    <p id="status">Preparando player...</p>
+
+    <video id="player" controls autoplay muted playsinline></video>
+
+    <h3>Logs</h3>
+    <pre id="logs"></pre>
+
+    <script>
+        const status = document.getElementById("status");
+        const logs = document.getElementById("logs");
+        const player = document.getElementById("player");
+
+        const canal = new BroadcastChannel("demo-live-mse");
+
+        const mimeType = 'video/webm; codecs="vp8"';
+
+        let sourceBuffer = null;
+        let segmentosRecebidos = 0;
+        let iniciou = false;
+
+        const fila = [];
+
+        function log(mensagem) {
+            console.log("[Demo MSE]", mensagem);
+            logs.textContent += mensagem + "\n";
+        }
+
+        if (!window.MediaSource ||
+            !MediaSource.isTypeSupported(mimeType)) {
+            status.textContent = "MSE VP8/WebM indisponível.";
+            throw new Error("Formato MSE não suportado");
+        }
+
+        const mediaSource = new MediaSource();
+
+        player.src = URL.createObjectURL(mediaSource);
+
+        function atualizarReproducao() {
+            if (player.buffered.length === 0) return;
+
+            const inicio = player.buffered.start(0);
+            const fim = player.buffered.end(
+                player.buffered.length - 1
+            );
+
+            // Começa perto do ponto mais recente.
+            if (!iniciou && fim - inicio > 0.3) {
+                player.currentTime = Math.max(inicio, fim - 0.5);
+
+                player.play().then(() => {
+                    log("Reprodução iniciada.");
+                    status.textContent = "Reproduzindo transmissão.";
+                }).catch(error => {
+                    log("Erro ao iniciar: " + error.message);
+                });
+
+                iniciou = true;
+            }
+
+            // Evita acumular muitos segundos de atraso.
+            if (iniciou && fim - player.currentTime > 4) {
+                player.currentTime = Math.max(
+                    inicio,
+                    fim - 0.7
+                );
+
+                log("Ajustando atraso da reprodução.");
+            }
+        }
+
+        function adicionarProximo() {
+            if (!sourceBuffer ||
+                sourceBuffer.updating ||
+                mediaSource.readyState !== "open" ||
+                fila.length === 0) {
+                return;
+            }
+
+            try {
+                sourceBuffer.appendBuffer(fila.shift());
+            } catch (error) {
+                log("Erro no appendBuffer: " + error.message);
+                status.textContent = "Erro ao adicionar segmento.";
+            }
+        }
+
+        mediaSource.addEventListener("sourceopen", () => {
+            sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+
+            sourceBuffer.addEventListener("updateend", () => {
+                atualizarReproducao();
+                adicionarProximo();
+            });
+
+            sourceBuffer.addEventListener("error", () => {
+                log("Erro ao processar segmento WebM.");
+            });
+
+            status.textContent = "Aguardando transmissão...";
+            log("SourceBuffer preparado.");
+
+            adicionarProximo();
+        });
+
+        // Mantém a ordem de conversão dos Blobs.
+        let conversoes = Promise.resolve();
+
+        canal.addEventListener("message", event => {
+            if (event.data?.type !== "video:chunk") return;
+
+            const blob = event.data.blob;
+
+            conversoes = conversoes.then(async () => {
+                const buffer = await blob.arrayBuffer();
+
+                fila.push(buffer);
+                segmentosRecebidos++;
+
+                log(
+                    `Segmento ${segmentosRecebidos}: ` +
+                    `${buffer.byteLength} bytes`
+                );
+
+                adicionarProximo();
+            }).catch(error => {
+                log("Falha ao receber segmento: " + error.message);
+            });
+        });
+
+        player.addEventListener("error", () => {
+            log("Erro no elemento video: " +
+                (player.error?.message || "desconhecido"));
+        });
+
+        log("Player iniciado.");
+    </script>
+</body>
+</html>
