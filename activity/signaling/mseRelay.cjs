@@ -2,7 +2,7 @@ const { WebSocketServer, WebSocket } = require("ws")
 const { timingSafeEqual } = require("node:crypto")
 const { criarInspectorWebM } = require("./webmInspector.cjs")
 const { criarHistoricoWebM } = require("./webHistory.cjs")
-const { default: cluster } = require("node:cluster")
+const { type } = require("node:os")
 
 const wss = new WebSocketServer({
     host: "127.0.0.1",
@@ -19,6 +19,12 @@ function limparHistorico(){
 
 const PUBLISH_KEY = process.env.DEMO_MSE_PUBLISH_KEY
 const VIEW_KEY = process.env.DEMO_MSE_VIEW_KEY
+
+const CODEC_AV1 = 'video/webm;codecs="av01.0.08M.08"'
+const CODEC_VP8 = 'video/webm;codecs="vp8"'
+
+let codecAtual = null
+let fallbackSolicitado = false
 
 if(!PUBLISH_KEY || !VIEW_KEY || PUBLISH_KEY === VIEW_KEY){
     throw new Error("Configure duas chaves direrentes para o relay MSE.")
@@ -44,9 +50,9 @@ const espectadores = new Set()
 
 let streamActive = false
 
-function avisarEspectadores(type){
+function avisarEspectadores(type, dados = {}){
     for(const espectador of espectadores){
-        enviar(espectador, { type })
+        enviar(espectador, { type, ...dados })
     }
 }
 
@@ -94,6 +100,29 @@ wss.on("connection", ws => {
                     continue
                 }
 
+                const agora = Date.now()
+                const fila = espectador.bufferedAmount
+
+                if(fila > 2 * 1024 * 1024) {
+                    if(!espectador.redeLentaDesde){
+                        espectador.redeLentaDesde = agora
+                    }
+
+                    const duracao = agora - espectador.redeLentaDesde
+                    const desdeUltimoAviso = agora - (espectador.ultimoAvisoRede || 0)
+
+                    if(duracao >= 5000 && desdeUltimoAviso >= 10000){
+                        enviar(espectador, {
+                            type: "viewer:network-warning",
+                            bufferedBytes: fila
+                        })
+                        espectador.ultimoAvisoRede = agora
+                    }
+                }else{
+                    espectador.redeLentaDesde = 0
+                }
+
+
                 espectador.send(data, {binary: true})
             }
             return
@@ -128,16 +157,27 @@ wss.on("connection", ws => {
                 enviar(ws, {type: "publisher:ready"})
                 break
             case "stream:start":
-                if(ws !== transmissor) return
+                if(ws !== transmissor) break
+
+                if(![CODEC_AV1, CODEC_VP8].includes(mensagem.mimeType)){
+                    enviar(ws, {
+                        type: "error",
+                        message: "Codec não suportado pelo relay."
+                    })
+                    break
+                }
+
+                codecAtual = mensagem.mimeType
+                fallbackSolicitado = false
 
                 streamActive = true
                 limparHistorico()
 
-                inspectorWebM = criarInspectorWebM()
+                avisarEspectadores("stream:reset", {
+                    mimeType: codecAtual
+                })
 
-                avisarEspectadores("stream:reset")
-
-                console.log("[MSE] Nova transmissão iniciada.")
+                console.log("[MSE] Nova transmissão iniciada: ", codecAtual)
                 break
             case "stream:stop":
                 if(ws !== transmissor) return
@@ -169,7 +209,8 @@ wss.on("connection", ws => {
                 enviar(ws, {
                     type: "viewer:ready",
                     cachedChunks: replay.partes.length,
-                    cachedBytes: replay.bytes
+                    cachedBytes: replay.bytes,
+                    mimeType: streamActive ? codecAtual : null
                 })
 
                 for(const parte of replay.partes){
@@ -189,6 +230,38 @@ wss.on("connection", ws => {
 
                 atualizarContagemEspectadores()
 
+                break
+            case "viewer:codec-unsupported":
+            case "viewer:performance-issue":
+                if(!espectadores.has(ws)) break
+                if(!streamActive) break
+                if(mensagem.mimeType !== codecAtual) break
+
+                if(mensagem.type === "viewer:performance-issue" &&
+                    !["dropped-frames", "decoder-stall"].includes(mensagem.reason)
+                ){
+                    break
+                }
+
+                if(codecAtual === CODEC_AV1 && !fallbackSolicitado){
+                    fallbackSolicitado = true
+
+                    console.log("[MSE] Fallback solicitado: ", {
+                        origem: mensagem.type,
+                        motivo: mensagem.reason ?? "codec-incompativel",
+                        codecAtual
+                    })
+
+                    enviar(transmissor, {
+                        type: "publisher:use-fallback",
+                        mimeType: CODEC_VP8
+                    })
+                }else if (codecAtual === CODEC_VP8){
+                    enviar(ws, {
+                        type: "error",
+                        message: "Este navegador não suporta VP8/WebM"
+                    })
+                }
                 break
         }
     })

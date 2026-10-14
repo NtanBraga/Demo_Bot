@@ -13,6 +13,9 @@ export function montarPlayerMSE(container, clientId) {
         <p id="mse-viewers">
             Espectadores conectados: 0
         </p>
+        <p id="mse-health">
+            Aguardando informações de desempenho...
+        </p>
 
         <input
             id="mse-key"
@@ -63,8 +66,8 @@ export function montarPlayerMSE(container, clientId) {
     const disconnectButton = section.querySelector("#mse-disconnect");
     const video = section.querySelector("#mse-video");
     const logs = section.querySelector("#mse-logs");
+    const health = section.querySelector("#mse-health")
 
-    const mimeType = 'video/webm; codecs="vp8"';
 
     let socket = null;
     let mediaSource = null;
@@ -75,9 +78,19 @@ export function montarPlayerMSE(container, clientId) {
     let segments = 0;
     let queuedBytes = 0;
 
+    let codecAtivo = null
+    let inicioCodecEm = 0
+    let ultimoSeekEm = 0
+    let qualidadeAnterior = null
+    let posicaoAnterior = null
+    let amostrasComQuedas = 0
+    let amostrasTravadas = 0
+    let fallbackDesempenhoSolicitado = false
+    let alertaRedeEm = 0
+    let bytesPendentesNoRelay = 0
+
     const queue = [];
 
- 
     function log(message) {
         console.log("[Activity MSE]", message);
 
@@ -105,6 +118,20 @@ export function montarPlayerMSE(container, clientId) {
         queuedBytes = 0;
         started = false;
         segments = 0;
+
+        codecAtivo = null
+        inicioCodecEm = 0
+        ultimoSeekEm = 0
+        qualidadeAnterior = null
+        posicaoAnterior = null
+        amostrasComQuedas = 0
+        amostrasTravadas = 0
+        fallbackDesempenhoSolicitado = false
+
+        alertaRedeEm = 0
+        bytesPendentesNoRelay = 0
+
+        health.textContent = "Aguardando dados de desempenho..."
     }
 
     function desconectar() {
@@ -137,32 +164,21 @@ export function montarPlayerMSE(container, clientId) {
         if (!started && end - start > 0.3) {
             started = true;
 
-            video.currentTime = Math.max(
-                start,
-                end - 0.5
-            );
+            video.currentTime = Math.max(start,end - 0.5);
 
-            video.play()
-                .then(() => {
-                    status.textContent =
-                        "Reproduzindo via MSE.";
-                })
-                .catch(error => {
-                    status.textContent =
-                        "Clique em Play para iniciar.";
+            ultimoSeekEm = performance.now()
 
-                    log(`Autoplay: ${error.message}`);
+            video.play().then(() => {
+                status.textContent = "Reproduzindo via MSE.";
+            }).catch(error => {
+                status.textContent = "Clique em Play para iniciar.";
+                log(`Autoplay: ${error.message}`);
                 });
 
-        } else if (
-            started &&
-            !video.paused &&
-            end - video.currentTime > 4
-        ) {
-            video.currentTime = Math.max(
-                start,
-                end - 0.7
-            );
+        } else if (started && !video.paused && end - video.currentTime > 4) {
+            video.currentTime = Math.max(start,end - 0.7);
+
+            ultimoSeekEm = performance.now()
 
             log("Atraso ajustado.");
         }
@@ -195,6 +211,92 @@ export function montarPlayerMSE(container, clientId) {
         }
     }
 
+    function monitorarReproducao(){
+        if(!socket || !mediaSource || !codecAtivo) return
+
+        const agora = performance.now()
+
+        const atrasoBuffer = video.buffered.length
+            ? Math.max(0, video.buffered.end(video.buffered.length - 1) - video.currentTime)
+            : null
+            
+        const filaMSE = queuedBytes / (1024 * 1024)
+        const qualidade = video.getVideoPlaybackQuality?.()
+
+        let taxaQuedas = null
+
+        if(qualidade) {
+            const atual = {
+                total: qualidade.totalVideoFrames,
+                descartados: qualidade.droppedVideoFrames
+            }
+
+            if(qualidadeAnterior){
+                const totalNovos = atual.total - qualidadeAnterior.total
+                const descartadosNovos = atual.descartados - qualidadeAnterior.descartados
+
+                if(totalNovos >= 30 && descartadosNovos >= 0 && descartadosNovos <= totalNovos){
+                    taxaQuedas = descartadosNovos / totalNovos
+                }
+
+            }
+            qualidadeAnterior = atual
+        }
+        const reproduzindo = started && !video.paused && !video.seeking && !document.hidden
+
+        const janelaValida = reproduzindo && agora - inicioCodecEm >= 20_000 && agora - ultimoSeekEm >= 10_000
+        const muitasQuedas = janelaValida && taxaQuedas !== null && taxaQuedas >= 0.20
+        const travamento = 
+            janelaValida &&
+            atrasoBuffer !== null &&
+            atrasoBuffer >= 2 &&
+            video.readyState >= 2 &&
+            posicaoAnterior !== null &&
+            Math.abs(video.currentTime - posicaoAnterior) < 0.15
+        
+        amostrasComQuedas = muitasQuedas ? amostrasComQuedas + 1 : 0
+        amostrasTravadas = travamento ? amostrasTravadas + 1 : 0
+        
+        posicaoAnterior = video.currentTime
+
+        const quedaTexto = taxaQuedas === null
+            ? "n/d"
+            : `${(taxaQuedas * 100).toFixed(1)}%`
+
+        const atrasoTexto = atrasoBuffer === null
+            ? "n/d"
+            : `${atrasoBuffer.toFixed(1)}s`
+
+        const redeEmAlerta = agora - alertaRedeEm < 15_000
+        const redeTexto = redeEmAlerta 
+            ? `Congestionada (${(bytesPendentesNoRelay / 1048576).toFixed(1)} MiB)`
+            : "Sem alerta"
+
+        health.textContent = 
+            `Codec: ${codecAtivo.includes("av01") ? "AV1" : "VP8"} | ` +
+            `Quadros descartados: ${quedaTexto} | ` +
+            `Atraso no buffer: ${atrasoTexto} | ` +
+            `Fila MSE: ${filaMSE.toFixed(2)} MiB | ` +
+            `Rede: ${redeTexto}`
+        
+        if(codecAtivo.includes("av01") && !fallbackDesempenhoSolicitado && (amostrasComQuedas >= 3 || amostrasTravadas >= 3)){
+            const reason = amostrasComQuedas >= 3 ? "dropped-frames" : "decoder-stall"
+
+            fallbackDesempenhoSolicitado = true
+
+            log(`Desempenho ruim persistente: ${reason}`)
+
+            if(socket.readyState === WebSocket.OPEN){
+                socket.send(JSON.stringify({
+                    type: "viewer:performance-issue",
+                    mimeType: codecAtivo,
+                    reason
+                }))
+            }
+            status.textContent = "Desempenho insuficiente. Solicitando VP8..."
+        }
+    }
+
     function conectar() {
         const token = keyInput.value.trim();
 
@@ -204,18 +306,12 @@ export function montarPlayerMSE(container, clientId) {
             return;
         }
 
-        if (
-            !window.MediaSource ||
-            !MediaSource.isTypeSupported(mimeType)
-        ) {
-            status.textContent =
-                "MSE com VP8/WebM indisponível neste navegador.";
+        if (!window.MediaSource) {
+            status.textContent = "MediaSource indisponível.";
             return;
         }
 
         if (socket) return;
-
-        prepararMidia()
 
         connectButton.disabled = true;
         disconnectButton.disabled = false;
@@ -252,6 +348,7 @@ export function montarPlayerMSE(container, clientId) {
 
             // Dados binários representam segmentos WebM.
             if (event.data instanceof ArrayBuffer) {
+                if (!mediaSource) return
                 queue.push(event.data);
 
                 queuedBytes += event.data.byteLength;
@@ -290,17 +387,25 @@ export function montarPlayerMSE(container, clientId) {
 
             switch (mensagem.type) {
                 case "viewer:ready":
-                    status.textContent =
-                        "Autenticado. Aguardando segmentos...";
+                    status.textContent = "Autenticado. Aguardando segmentos...";
+                    log("Histórico disponível: " + `${mensagem.cachedChunks ?? "não informado"} ` + "segmentos.");
+                    
+                    if(mensagem.mimeType){
+                        prepararMidia(mensagem.mimeType)
 
-                    log(
-                        "Histórico disponível: " +
-                        `${mensagem.cachedChunks ?? "não informado"} ` +
-                        "segmentos."
-                    );
+                        
+                    }else{
+                        status.textContent = "Aguardando transmissão..."
+                    }
+
                     break;
                 case "viewers:count":
                     viewersLabel.textContent = `Espectadores conectados: ${mensagem.count}`
+                    break
+                case "viewer:network-warning":
+                    alertaRedeEm = performance.now()
+                    bytesPendentesNoRelay = mensagem.bufferedBytes
+                    log(`Rede congestionada:` + `${(mensagem.bufferedBytes / 1048576).toFixed(1)} MiB`)
                     break
                 case "stream:ended":
                     limparMidia()
@@ -310,9 +415,13 @@ export function montarPlayerMSE(container, clientId) {
                     break;
 
                 case "stream:reset":
-                    prepararMidia()
-                    status.textContent = "Nova transmissão iniciada."
-                    log("Player reinicializdo para nova transmissão")
+                    prepararMidia(mensagem.mimeType)
+
+                    if(codecAtivo === mensagem.mimeType){
+                        status.textContent = "Nova transmissão iniciada."
+                    }
+                    
+                    log(`Nova transmissão: ${mensagem.mimeType}`)
                     break
                 
                 case "error":
@@ -348,8 +457,25 @@ export function montarPlayerMSE(container, clientId) {
         });
     }
 
-    function prepararMidia(){
+    function prepararMidia(mimeType){
         limparMidia()
+
+
+        if(!mimeType || !MediaSource.isTypeSupported(mimeType)){
+            status.textContent = `Codec indisponivel: ${mimeType || "desconhecido"}`
+
+            if(socket?.readyState === WebSocket.OPEN && mimeType){
+                socket.send(JSON.stringify({
+                    type: "viewer:codec-unsupported",
+                    mimeType
+                }))
+                log("Solicitando fallback de codec.")
+            }
+            return
+        }
+
+        codecAtivo = mimeType
+        inicioCodecEm = performance.now()
 
         const ms = new MediaSource()
 
@@ -368,6 +494,18 @@ export function montarPlayerMSE(container, clientId) {
                     if(sourceBuffer !== buffer) return
 
                     acompanharBuffer()
+
+                    if(video.buffered.length > 0){
+                        const inicio = video.buffered.start(0)
+                        const fim = video.buffered.end(video.buffered.length - 1)
+
+                        if(fim - inicio > 90 && video.currentTime - inicio > 30){
+                            const removerAte = video.currentTime - 30
+                            buffer.remove(0, removerAte)
+                            return
+                        }
+                    }
+
                     anexarProximo()
                 })
                 buffer.addEventListener("error", () => {
@@ -404,5 +542,10 @@ export function montarPlayerMSE(container, clientId) {
         desconectar
     );
 
-    window.addEventListener("pagehide", desconectar);
+    const monitorarInterval = window.setInterval(monitorarReproducao, 5000)
+
+    window.addEventListener("pagehide", () => {
+        clearInterval(monitorarInterval)
+        desconectar()
+    });
 }

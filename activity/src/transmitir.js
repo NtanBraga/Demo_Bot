@@ -8,8 +8,23 @@ const info = document.getElementById("info")
 const connection = document.getElementById("connection")
 const viewerCount = document.getElementById("viewer-count")
 
+const streamMetrics = document.getElementById("stream-metrics")
+
 let captureStream = null
 let recorder = null
+
+let bytesNaJanela = 0
+let ultimoSegmentoEm = 0
+let ultimaMedicaoEm = performance.now()
+
+let amostrasFilaCritica = 0
+let desconexaoPorCongestionamento = false
+
+const CODEC_AV1 = 'video/webm;codecs="av01.0.08M.08"'
+const CODEC_VP8 = 'video/webm;codecs="vp8"'
+
+let preferirVP8 = false
+let trocaCodecPendente = null
 
 const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
 const socket = new WebSocket(`${protocol}//${window.location.host}/ws-mse`)
@@ -62,6 +77,10 @@ socket.addEventListener("message", (event) => {
             viewerCount.textContent = `Espectadores conectados: ${mensagem.count}`
             console.log(`[Demo Live] Espectadores: ${mensagem.count}`)
             break
+        case "publisher:use-fallback":
+            console.warn("[Demo Live] Fallback solicitado pelo relay.")
+            solicitarFallbackVP8()
+            break
         case "error":
             console.error("[Servidor]", mensagem.message)
             connection.textContent = `Erro: ${mensagem.message}`
@@ -79,7 +98,7 @@ socket.addEventListener("close", (event) => {
 
     pararCaptura()
 
-    connection.textContent = "Servidor desconectado."
+    connection.textContent = desconexaoPorCongestionamento ? "Envio interrompido: congestionamento persistente." : "Servidor desconectado"
     startButton.disabled = true
     viewerCount.textContent = "Espectadores conectados: 0"
 })
@@ -87,6 +106,95 @@ socket.addEventListener("close", (event) => {
 socket.addEventListener("error", (error) => {
     console.error("[Demo Live] Erro de conexão: ", error)
 })
+
+function solicitarFallbackVP8(){
+    preferirVP8 = true
+
+    if(!captureStream || !recorder) return
+    if(trocaCodecPendente) return
+
+    if(!MediaRecorder.isTypeSupported(CODEC_VP8)){
+        console.warn("[Codec] Fallback VP8 indisponivel")
+        return
+    }
+
+    trocaCodecPendente = CODEC_VP8
+
+    statusHTML.textContent = "Alterando codec para VP8..."
+    stopButton.disabled = true
+
+
+    if(recorder.state !== "inactive"){
+        recorder.stop()
+    }
+}
+
+function iniciarGravador(mimeType){
+    const gravador = new MediaRecorder(captureStream, {
+        mimeType,
+        videoBitsPerSecond: 1_500_000
+    })
+
+    recorder = gravador
+
+    console.log("[Codec] MediaRecorder: ", gravador.mimeType)
+
+    gravador.addEventListener("start", () => {
+        const agora = performance.now()
+
+        bytesNaJanela = 0
+        ultimaMedicaoEm = agora
+        ultimoSegmentoEm = agora
+        enviar({
+            type: "stream:start",
+            mimeType
+        })
+    })
+
+    gravador.addEventListener("dataavailable", event => {
+        if(event.data.size === 0) return
+        if(socket.readyState !== WebSocket.OPEN) return
+
+        socket.send(event.data)
+
+        bytesNaJanela += event.data.size
+        ultimoSegmentoEm = performance.now()
+    })
+
+    gravador.addEventListener("error", event => {
+        console.error("[Codec] Erro do MediaRecorder: ", event.error)
+
+        if(mimeType === CODEC_AV1){
+            solicitarFallbackVP8()
+        }else{
+            pararCaptura()
+        }
+    })
+    gravador.addEventListener("stop", () => {
+        enviar({ type: "stream:stop" })
+
+        const proximoCodec = trocaCodecPendente
+        trocaCodecPendente = null
+
+        const capturaAtiva = captureStream?.getVideoTracks().some(track => track.readyState === "live")
+
+        if(proximoCodec && capturaAtiva && socket.readyState === WebSocket.OPEN){
+            try{
+                iniciarGravador(proximoCodec)
+
+                statusHTML.textContent = "Captura ativa (VP8)"
+                stopButton.disabled = false
+
+                return
+            }catch(e){
+                console.error("[Codec] Falha no fallback: ", e)
+            }
+        }
+        finalizarCaptura()
+    })
+    gravador.start(1000)
+    statusHTML.textContent = `Captura ativa (${mimeType === CODEC_AV1 ? "AV1" : "VP8"})`
+}
 
 async function iniciarCaptura() {
     if(captureStream || socket.readyState !== WebSocket.OPEN) return
@@ -122,32 +230,13 @@ async function iniciarCaptura() {
             `${settings.width}x${settings.height} | ` +
             `Audio: ${stream.getAudioTracks().length > 0 ? "Sim" : "Não"}`
         
-        const mimeType = "video/webm;codecs=vp8"
+        const mimeType = (!preferirVP8 && MediaRecorder.isTypeSupported(CODEC_AV1)) ? CODEC_AV1 : CODEC_VP8
 
-        if(!MediaRecorder.isTypeSupported(mimeType))throw new Error("VP8/WebM não é suportado neste navegador.")
-        
-        recorder = new MediaRecorder(stream, {
-            mimeType,
-            videoBitsPerSecond: 1_500_000
-        })
+        if(!MediaRecorder.isTypeSupported(mimeType)){
+            throw new Error("Nenhum codec compativel encontrado.")
+        }
 
-        recorder.addEventListener("start", () => {
-            enviar({ type: "stream:start" })
-        })
-
-        recorder.addEventListener("dataavailable", (event) => {
-            if(event.data.size === 0) return
-            if(socket.readyState !== WebSocket.OPEN) return
-            socket.send(event.data)
-        })
-
-        recorder.addEventListener("stop", () => {
-            enviar({ type: "stream:stop" })
-            finalizarCaptura()
-            console.log("Transmissão encerrada.")
-        })
-
-        recorder.start(1000)
+        iniciarGravador(mimeType)
 
         statusHTML.textContent = "Captura ativa."
         stopButton.disabled = false
@@ -185,6 +274,7 @@ function finalizarCaptura(){
 }
 
 function pararCaptura(){
+    trocaCodecPendente = null
     stopButton.disabled = true
 
     if(recorder && recorder.state !== "inactive"){
@@ -196,10 +286,68 @@ function pararCaptura(){
     finalizarCaptura()
 }
 
+function monitorarTransmissor(){
+    const agora = performance.now()
+
+    const segundos = (agora - ultimaMedicaoEm) / 1000
+
+    ultimaMedicaoEm = agora
+
+    const kbps = segundos > 0 ? Math.round(bytesNaJanela * 8 / (segundos * 1000)) : 0
+
+    bytesNaJanela = 0
+
+    if(!recorder || recorder.state === "inactive"){
+        streamMetrics.textContent = "Transmissão inativa."
+        amostrasFilaCritica = 0
+        return
+    }
+
+    const filaBytes = socket.bufferedAmount
+    const filaMiB = filaBytes / (1024 * 1024)
+    const tempoSemSegmento = (agora - ultimoSegmentoEm) / 1000
+    const estadoRede = filaBytes > 8 * 1024 * 1024
+        ? "Critico"
+        : filaBytes > 2 * 1024 * 1024
+            ? "Atenção"
+            : "Normal"
+    streamMetrics.textContent = 
+        `Dados gerados: ${kbps} kb/s |` +
+        `Fila de envio: ${filaMiB.toFixed(2)} MiB |` +
+        `Rede: ${estadoRede} |` + 
+        `Ultimo segmento há ${tempoSemSegmento.toFixed(1)}s`
+
+    if(tempoSemSegmento > 5 && !document.hidden){
+        console.warn("[Desempenho] MediaRecorder demorando para gerar segmentos")
+    }
+
+    if(filaBytes > 12 * 1024 * 1024){
+        amostrasFilaCritica++
+    }else{
+        amostrasFilaCritica = 0
+    }
+
+    if(amostrasFilaCritica >= 3){
+        console.error("[Proteção] Fila WebScoker excessiva por tempo prolongado.")
+    
+        desconexaoPorCongestionamento = true
+        amostrasFilaCritica = 0
+
+        pararCaptura()
+
+        if(socket.readyState === WebSocket.OPEN){
+            socket.close(1000, "Envio congestionado")
+        }
+    }
+}
+
+const monitorTransmissorInterval = window.setInterval(monitorarTransmissor, 5000)
+
 startButton.addEventListener("click", iniciarCaptura)
 stopButton.addEventListener("click", pararCaptura)
 
 window.addEventListener("pagehide", () => {
     pararCaptura()
+    clearInterval(monitorTransmissorInterval)
     socket.close()
 })

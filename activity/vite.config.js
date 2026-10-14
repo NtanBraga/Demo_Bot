@@ -4,7 +4,7 @@ export default defineConfig({
     server: {
         strictPort: true,
         allowedHosts: [
-            "thee-save-philip-appendix.trycloudflare.com"
+            "region-mystery-pierre-circulation.trycloudflare.com"
         ],
         proxy: {
             "/ws-mse": {
@@ -20,3 +20,7 @@ export default defineConfig({
         }
     }
 })
+
+/* Get-ChildItem Env:DEMO_MSE* */
+/* $env:DEMO_MSE_PUBLISH_KEY = node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+    $env:DEMO_MSE_VIEW_KEY = node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" */
