@@ -1,24 +1,30 @@
-import { defineConfig } from "vite"
+import { model } from "mongoose"
+import { defineConfig, loadEnv } from "vite"
 
-export default defineConfig({
-    server: {
-        strictPort: true,
-        allowedHosts: [
-            "region-mystery-pierre-circulation.trycloudflare.com"
-        ],
-        proxy: {
-            "/ws-mse": {
-                target: "ws://127.0.0.1:3002",
-                ws: true,
-                changeOrigin: false
-            },
-            "/ws": {
-                target: "ws://127.0.0.1:3001",
-                ws: true,
-                changeOrigin: false
+export default defineConfig(({mode}) => {
+    const env = loadEnv(model, process.cwd(), "")
+
+    return{
+        server: {
+            strictPort: true,
+            allowedHosts: [
+                env.CLOUDFLARE_TUNNEL
+            ],
+            proxy: {
+                "/ws-mse": {
+                    target: "ws://127.0.0.1:3002",
+                    ws: true,
+                    changeOrigin: false
+                },
+                "/ws": {
+                    target: "ws://127.0.0.1:3001",
+                    ws: true,
+                    changeOrigin: false
+                }
             }
         }
     }
+    
 })
 
 /* Get-ChildItem Env:DEMO_MSE* */

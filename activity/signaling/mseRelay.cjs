@@ -1,8 +1,6 @@
 const { WebSocketServer, WebSocket } = require("ws")
 const { timingSafeEqual } = require("node:crypto")
-const { criarInspectorWebM } = require("./webmInspector.cjs")
 const { criarHistoricoWebM } = require("./webHistory.cjs")
-const { type } = require("node:os")
 
 const wss = new WebSocketServer({
     host: "127.0.0.1",
@@ -23,6 +21,16 @@ const VIEW_KEY = process.env.DEMO_MSE_VIEW_KEY
 const CODEC_AV1 = 'video/webm;codecs="av01.0.08M.08"'
 const CODEC_VP8 = 'video/webm;codecs="vp8"'
 
+const CODEC_AV1_OPUS = 'video/webm;codecs="av01.0.08M.08,opus"'
+const CODEC_VP8_OPUS = 'video/webm;codecs="vp8,opus"'
+
+const CODECS_PERMITIDOS = new Set([
+    CODEC_AV1,
+    CODEC_VP8,
+    CODEC_AV1_OPUS,
+    CODEC_VP8_OPUS
+])
+
 let codecAtual = null
 let fallbackSolicitado = false
 
@@ -42,8 +50,6 @@ function negarAcesso(ws){
     ws.close(1008, "Acesso não autorizado.")
 }
 
-
-let inspectorWebM = null
 
 let transmissor = null
 const espectadores = new Set()
@@ -87,8 +93,6 @@ wss.on("connection", ws => {
     ws.on("message", (data, isBinary) => {
         if(isBinary){
             if(ws !== transmissor || !streamActive) return
-
-            inspectorWebM?.analisar(data)
 
             historico.adicionar(data)
 
@@ -159,7 +163,7 @@ wss.on("connection", ws => {
             case "stream:start":
                 if(ws !== transmissor) break
 
-                if(![CODEC_AV1, CODEC_VP8].includes(mensagem.mimeType)){
+                if(!CODECS_PERMITIDOS.has(mensagem.mimeType)){
                     enviar(ws, {
                         type: "error",
                         message: "Codec não suportado pelo relay."
@@ -243,7 +247,7 @@ wss.on("connection", ws => {
                     break
                 }
 
-                if(codecAtual === CODEC_AV1 && !fallbackSolicitado){
+                if(codecAtual?.includes("av01") && !fallbackSolicitado){
                     fallbackSolicitado = true
 
                     console.log("[MSE] Fallback solicitado: ", {
@@ -252,11 +256,15 @@ wss.on("connection", ws => {
                         codecAtual
                     })
 
+                    const codecFallback = codecAtual.includes("opus")
+                        ? CODEC_VP8_OPUS
+                        : CODEC_VP8
+
                     enviar(transmissor, {
                         type: "publisher:use-fallback",
-                        mimeType: CODEC_VP8
+                        mimeType: codecFallback
                     })
-                }else if (codecAtual === CODEC_VP8){
+                }else if (codecAtual.includes("vp8")){
                     enviar(ws, {
                         type: "error",
                         message: "Este navegador não suporta VP8/WebM"

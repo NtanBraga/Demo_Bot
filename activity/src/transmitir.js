@@ -20,8 +20,11 @@ let ultimaMedicaoEm = performance.now()
 let amostrasFilaCritica = 0
 let desconexaoPorCongestionamento = false
 
+
 const CODEC_AV1 = 'video/webm;codecs="av01.0.08M.08"'
 const CODEC_VP8 = 'video/webm;codecs="vp8"'
+const CODEC_AV1_OPUS = 'video/webm;codecs="av01.0.08M.08,opus"'
+const CODEC_VP8_OPUS = 'video/webm;codecs="vp8,opus"'
 
 let preferirVP8 = false
 let trocaCodecPendente = null
@@ -112,28 +115,36 @@ function solicitarFallbackVP8(){
 
     if(!captureStream || !recorder) return
     if(trocaCodecPendente) return
+    if(recorder.state === "inactive") return
 
-    if(!MediaRecorder.isTypeSupported(CODEC_VP8)){
-        console.warn("[Codec] Fallback VP8 indisponivel")
+    const temAudio = captureStream.getAudioTracks().some(track => track.readyState === "live")
+
+    const codecFallback = temAudio ? CODEC_VP8_OPUS : CODEC_VP8
+
+    if(!MediaRecorder.isTypeSupported(codecFallback)){
+        console.warn("[Codec] VP8 não suporta esta configuração.")
+        pararCaptura()
         return
     }
 
-    trocaCodecPendente = CODEC_VP8
+    trocaCodecPendente = codecFallback
 
     statusHTML.textContent = "Alterando codec para VP8..."
     stopButton.disabled = true
 
 
-    if(recorder.state !== "inactive"){
-        recorder.stop()
-    }
+    recorder.stop()
+    
 }
 
 function iniciarGravador(mimeType){
     const gravador = new MediaRecorder(captureStream, {
         mimeType,
-        videoBitsPerSecond: 1_500_000
+        videoBitsPerSecond: 1_500_000,
+        audioBitsPerSecond: 192_000
     })
+
+    console.log("[Audio] Bitrate configurado: ", gravador.audioBitsPerSecond)
 
     recorder = gravador
 
@@ -164,7 +175,7 @@ function iniciarGravador(mimeType){
     gravador.addEventListener("error", event => {
         console.error("[Codec] Erro do MediaRecorder: ", event.error)
 
-        if(mimeType === CODEC_AV1){
+        if(mimeType.includes("av01")){
             solicitarFallbackVP8()
         }else{
             pararCaptura()
@@ -193,7 +204,25 @@ function iniciarGravador(mimeType){
         finalizarCaptura()
     })
     gravador.start(1000)
-    statusHTML.textContent = `Captura ativa (${mimeType === CODEC_AV1 ? "AV1" : "VP8"})`
+
+    const nomeCodec = mimeType.includes("av01") ? "AV1" : "VP8"
+    const temAudio = mimeType.includes("opus")
+    statusHTML.textContent = `Captura ativa (${nomeCodec}${temAudio ? " + Opus" : ""}).`
+}
+
+function escolherMimeType(){
+    const temAudio = captureStream.getAudioTracks().some(
+        track => track.readyState === "live"
+    )
+    const av1 = temAudio ? CODEC_AV1_OPUS : CODEC_AV1
+    const vp8 = temAudio ? CODEC_VP8_OPUS : CODEC_VP8
+
+    const candidatos = preferirVP8 ? [vp8] : [av1,vp8]
+    const mimeType = candidatos.find(tipo => MediaRecorder.isTypeSupported(tipo))
+
+    if(!mimeType) throw new Error("Nenhum formato WebM compativel com a captura.")
+
+    return mimeType
 }
 
 async function iniciarCaptura() {
@@ -210,7 +239,7 @@ async function iniciarCaptura() {
                 width: { ideal: 1920 },
                 height: { ideal: 1080 }
             },
-            audio: false
+            audio: true
         })
 
         if(socket.readyState !== WebSocket.OPEN){
@@ -219,6 +248,22 @@ async function iniciarCaptura() {
         }
 
         captureStream = stream
+
+        const audioTrack = stream.getAudioTracks()[0]
+
+        if(audioTrack){
+            console.log("[Audio] Configuração original: ", audioTrack.getSettings())
+
+            try{
+                await audioTrack.applyConstraints({
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false
+                })
+            }catch(error){
+                console.warn("[Audio] Não foi possivel alterar o processamento: ", error.message)
+            }
+        }
 
         preview.srcObject = stream
         await preview.play()
@@ -230,15 +275,13 @@ async function iniciarCaptura() {
             `${settings.width}x${settings.height} | ` +
             `Audio: ${stream.getAudioTracks().length > 0 ? "Sim" : "Não"}`
         
-        const mimeType = (!preferirVP8 && MediaRecorder.isTypeSupported(CODEC_AV1)) ? CODEC_AV1 : CODEC_VP8
+        const mimeType = escolherMimeType()
 
-        if(!MediaRecorder.isTypeSupported(mimeType)){
-            throw new Error("Nenhum codec compativel encontrado.")
-        }
+        console.log("[Demo Live] Formato selecionado: ", mimeType)
+        console.log("[Demo Live] Faixas de audio: ", stream.getAudioTracks().length)
 
         iniciarGravador(mimeType)
 
-        statusHTML.textContent = "Captura ativa."
         stopButton.disabled = false
 
         videoTrack.addEventListener("ended", pararCaptura)

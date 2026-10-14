@@ -32,6 +32,10 @@ export function montarPlayerMSE(container, clientId) {
             Desconectar
         </button>
 
+        <button id="mse-sound" disabled>
+            Ativar som
+        </button>
+
         <video
             id="mse-video"
             controls
@@ -67,7 +71,9 @@ export function montarPlayerMSE(container, clientId) {
     const video = section.querySelector("#mse-video");
     const logs = section.querySelector("#mse-logs");
     const health = section.querySelector("#mse-health")
+    const soundButton = section.querySelector("#mse-sound")
 
+    let somAtivado = false
 
     let socket = null;
     let mediaSource = null;
@@ -113,6 +119,8 @@ export function montarPlayerMSE(container, clientId) {
         objectUrl = null;
         mediaSource = null;
         sourceBuffer = null;
+
+        soundButton.disabled = true
 
         queue.length = 0;
         queuedBytes = 0;
@@ -460,7 +468,6 @@ export function montarPlayerMSE(container, clientId) {
     function prepararMidia(mimeType){
         limparMidia()
 
-
         if(!mimeType || !MediaSource.isTypeSupported(mimeType)){
             status.textContent = `Codec indisponivel: ${mimeType || "desconhecido"}`
 
@@ -473,6 +480,14 @@ export function montarPlayerMSE(container, clientId) {
             }
             return
         }
+
+        const temAudio = mimeType.includes("opus")
+
+        soundButton.disabled = !temAudio
+
+        video.muted = !temAudio || !somAtivado
+
+        soundButton.textContent = video.muted ? "Ativar som" : "Silenciar"
 
         codecAtivo = mimeType
         inicioCodecEm = performance.now()
@@ -534,6 +549,15 @@ export function montarPlayerMSE(container, clientId) {
             );
         }
     });
+
+    soundButton.addEventListener("click", () => {
+        somAtivado = !somAtivado
+        video.muted = !somAtivado
+
+        soundButton.textContent = somAtivado ? "Silenciar" : "Ativar som"
+
+        log(somAtivado ? "Som Ativado." : "Som silenciado.")
+    })
 
     connectButton.addEventListener("click", conectar);
 

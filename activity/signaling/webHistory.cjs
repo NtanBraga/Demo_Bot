@@ -16,6 +16,9 @@ function criarHistoricoWebM(){
     let clusterAtual = null
     let erro = false
 
+    let faixaAtual = null
+    let numeroFaixaVideo = null
+
     function partesEntre(inicio, fim){
         const partes = []
 
@@ -86,6 +89,31 @@ function criarHistoricoWebM(){
             const elementos = decoder.decode(buffer)
 
             for(const elemento of elementos){
+
+                if(elemento.name === "TrackEntry" && elemento.type === "m"){
+                    if(!elemento.isEnd){
+                        faixaAtual = {
+                            numero: null,
+                            tipo: null
+                        }
+                    }else{
+                        if(faixaAtual?.tipo === 1){
+                            numeroFaixaVideo = faixaAtual.numero
+                            console.log("[WebM] Faixa de video identificada: ", numeroFaixaVideo)
+                        }
+                        faixaAtual = null
+                    }
+                }
+
+                if(faixaAtual){
+                    if(elemento.name === "TrackNumber"){
+                        faixaAtual.numero = Number(elemento.value)
+                    }
+                    if(elemento.name === "TrackType"){
+                        faixaAtual.tipo = Number(elemento.value)
+                    }
+                }
+
                 if(elemento.name === "Cluster" && elemento.type === "m" && !elemento.isEnd){
                     if(!inicializacao){
                         if(elemento.tagStart > MAX_HEADER_BYTES){
@@ -104,12 +132,14 @@ function criarHistoricoWebM(){
                     }
                     clusters.push(clusterAtual)
                 }
-                if(elemento.name === "SimpleBlock" && clusterAtual && !clusterAtual.primeiroBloco){
-                    clusterAtual.primeiroBloco = true
+                if(elemento.name === "SimpleBlock" && clusterAtual && !clusterAtual.primeiroBloco && numeroFaixaVideo !== null){
 
                     const bloco = tools.readBlock(elemento.data)
 
-                    clusterAtual.keyframe = Boolean(bloco.keyframe)
+                    if(Number(bloco.trackNumber) === numeroFaixaVideo){
+                        clusterAtual.primeiroBloco = true
+                        clusterAtual.keyframe = Boolean(bloco.keyframe)
+                    }
                 }
             }
         }catch(error){
