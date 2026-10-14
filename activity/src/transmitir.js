@@ -144,6 +144,9 @@ function iniciarGravador(mimeType){
         audioBitsPerSecond: 192_000
     })
 
+    const GRAVAR_TESTE_LOCAL = false
+    const partesTeste = []
+
     console.log("[Audio] Bitrate configurado: ", gravador.audioBitsPerSecond)
 
     recorder = gravador
@@ -164,6 +167,7 @@ function iniciarGravador(mimeType){
 
     gravador.addEventListener("dataavailable", event => {
         if(event.data.size === 0) return
+        if(GRAVAR_TESTE_LOCAL) partesTeste.push(event.data)
         if(socket.readyState !== WebSocket.OPEN) return
 
         socket.send(event.data)
@@ -182,6 +186,27 @@ function iniciarGravador(mimeType){
         }
     })
     gravador.addEventListener("stop", () => {
+
+        if(GRAVAR_TESTE_LOCAL && partesTeste.length > 0){
+            const arquivo = new Blob(partesTeste, {
+                type: gravador.mimeType
+            })
+
+            const url = URL.createObjectURL(arquivo)
+
+            const link = document.createElement("a")
+            link.href = url
+            link.download = "teste-audio-demo-live.webm"
+
+            document.body.appendChild(link)
+            link.click()
+            link.remove()
+
+            setTimeout(() => URL.revokeObjectURL(url), 30000)
+
+            console.log("[Audio] Gravação local salva: ", arquivo.size, "bytes")
+        }
+
         enviar({ type: "stream:stop" })
 
         const proximoCodec = trocaCodecPendente
@@ -239,7 +264,12 @@ async function iniciarCaptura() {
                 width: { ideal: 1920 },
                 height: { ideal: 1080 }
             },
-            audio: true
+            audio: {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+                channelCount: { ideal: 2 }
+            }
         })
 
         if(socket.readyState !== WebSocket.OPEN){
@@ -256,12 +286,13 @@ async function iniciarCaptura() {
 
             try{
                 await audioTrack.applyConstraints({
-                    echoCancellation: false,
-                    noiseSuppression: false,
-                    autoGainControl: false
+                    echoCancellation: {exact: false},
+                    noiseSuppression: {exact: false},
+                    autoGainControl: {exact: false},
+                    channelCount: { ideal: 2 }
                 })
             }catch(error){
-                console.warn("[Audio] Não foi possivel alterar o processamento: ", error.message)
+                console.warn("[Audio]Falha ao configurar audio: ", error.name, error.message, error.constraint)
             }
         }
 
