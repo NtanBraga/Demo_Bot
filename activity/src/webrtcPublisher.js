@@ -353,6 +353,13 @@ async function startCapture(){
     }
 
     try{
+
+        if(mode === 'system'){
+            options.video.displaySurface = 'monitor'
+            options.systemAudio = 'include'
+            options.windowAudio = 'system'
+        }
+
         const stream = await navigator.mediaDevices.getDisplayMedia(options)
 
         if(!authenticated){

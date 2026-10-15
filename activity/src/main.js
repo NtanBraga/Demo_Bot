@@ -1,6 +1,7 @@
 import { montarPlayerMSE } from './mseActivityPlayer'
 import './style.css'
 import { DiscordSDK } from "@discord/embedded-app-sdk"
+import { montarPlayerWebRTC } from './webrtcActivityPlayer'
 
 const CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID
 
@@ -15,8 +16,6 @@ document.querySelector('#app').innerHTML = `
 `
 
 const discordStatus = document.getElementById("discord-status")
-
-montarPlayerMSE(document.querySelector("#app main"), CLIENT_ID)
 
 async function iniciarActivity(){
   try{
@@ -40,6 +39,11 @@ async function iniciarActivity(){
     console.log("[Atividade] SDK conectado.")
     console.log("[Atividade] Channel ID: ", discordSDK.channelId)
     console.log("[Atividade] Guild ID: ", discordSDK.guildId)
+
+    const container = document.querySelector("#app main")
+
+    montarPlayerMSE(container, CLIENT_ID)
+    montarPlayerWebRTC(container, CLIENT_ID)
 
   }catch(e){
     console.error("[Atividade] Erro: ", e)
