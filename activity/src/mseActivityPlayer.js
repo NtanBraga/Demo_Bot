@@ -83,12 +83,21 @@ export function montarPlayerMSE(container, clientId) {
     let started = false;
     let segments = 0;
     let queuedBytes = 0;
+    let pausadoPorOcultacao = false
+
 
     let codecAtivo = null
     let inicioCodecEm = 0
     let ultimoSeekEm = 0
     let qualidadeAnterior = null
     let posicaoAnterior = null
+
+    let ultimaMedicaoFPS = 0
+    let fpsEfetivo = null
+
+    let amostraBufferAnterior = null
+    let ultimoLogDiagnostico = 0
+
     let amostrasComQuedas = 0
     let amostrasTravadas = 0
     let fallbackDesempenhoSolicitado = false
@@ -107,10 +116,55 @@ export function montarPlayerMSE(container, clientId) {
         }
     }
 
+    const eventosDiagnostico = [
+        "waiting",
+        "stalled",
+        "playing",
+        "pause",
+        "seeking",
+        "seeked"
+    ]
+
+    for(const evento of eventosDiagnostico){
+        video.addEventListener(evento, () => {
+            const buffered = video.buffered
+            const faixas = []
+
+            if(buffered){
+                for(let i = 0; i < buffered.length; i++){
+                    faixas.push({
+                        inicio: buffered.start(i),
+                        fim: buffered.end(i)
+                    })
+                }
+            }
+
+
+            const posicao = video.currentTime
+
+            const faixaAtual = faixas.find(faixa => posicao >= faixa.inicio && posicao <= faixa.fim)
+
+           
+            console.log(`[Playback] ${evento}`, {
+                posicao: posicao.toFixed(3),
+                readyState: video.readyState,
+                paused: video.paused,
+                seeking: video.seeking,
+                documentHidden: document.hidden,
+                restanteNaFaixa: faixaAtual
+                    ? (faixaAtual.fim - posicao).toFixed(3)
+                    : null,
+                faixas
+            })
+        })
+    }
+
     function limparMidia() {
         video.pause();
         video.removeAttribute("src");
         video.load();
+
+        pausadoPorOcultacao = false
 
         if (objectUrl) {
             URL.revokeObjectURL(objectUrl);
@@ -119,6 +173,11 @@ export function montarPlayerMSE(container, clientId) {
         objectUrl = null;
         mediaSource = null;
         sourceBuffer = null;
+
+        ultimaMedicaoFPS = 0
+        fpsEfetivo = null
+
+        amostraBufferAnterior = null
 
         soundButton.disabled = true
 
@@ -161,7 +220,7 @@ export function montarPlayerMSE(container, clientId) {
     }
 
     function acompanharBuffer() {
-        if (!video.buffered.length) return;
+        if (!video.buffered.length || video.seeking || document.hidden) return;
 
         const start = video.buffered.start(0);
 
@@ -169,10 +228,10 @@ export function montarPlayerMSE(container, clientId) {
             video.buffered.length - 1
         );
 
-        if (!started && end - start > 0.3) {
+        if (!started && end - start >= 2) {
             started = true;
 
-            video.currentTime = Math.max(start,end - 0.5);
+            video.currentTime = Math.max(start,end - 2);
 
             ultimoSeekEm = performance.now()
 
@@ -183,12 +242,14 @@ export function montarPlayerMSE(container, clientId) {
                 log(`Autoplay: ${error.message}`);
                 });
 
-        } else if (started && !video.paused && end - video.currentTime > 4) {
-            video.currentTime = Math.max(start,end - 0.7);
+        } else if (started && !video.paused && !video.seeking && end - video.currentTime > 7 && performance.now() - ultimoSeekEm > 3000) {
+            const atrasoAnterior = end - video.currentTime
+
+            video.currentTime = Math.max(start,end - 2);
 
             ultimoSeekEm = performance.now()
 
-            log("Atraso ajustado.");
+            log(`Atraso ajustado: ${atrasoAnterior.toFixed(2)}s`);
         }
     }
 
@@ -247,8 +308,16 @@ export function montarPlayerMSE(container, clientId) {
                     taxaQuedas = descartadosNovos / totalNovos
                 }
 
+                const segundos = (agora - ultimaMedicaoFPS) / 1000
+                if(segundos > 0 ){
+                    fpsEfetivo = Math.max(0, (totalNovos - descartadosNovos) / segundos)
+                }
             }
+
             qualidadeAnterior = atual
+
+            ultimaMedicaoFPS = agora
+
         }
         const reproduzindo = started && !video.paused && !video.seeking && !document.hidden
 
@@ -285,7 +354,8 @@ export function montarPlayerMSE(container, clientId) {
             `Quadros descartados: ${quedaTexto} | ` +
             `Atraso no buffer: ${atrasoTexto} | ` +
             `Fila MSE: ${filaMSE.toFixed(2)} MiB | ` +
-            `Rede: ${redeTexto}`
+            `Rede: ${redeTexto} | ` +
+            `FPS exibidos: ${fpsEfetivo?.toFixed(1) ?? "n/d"} |`
         
         if(codecAtivo.includes("av01") && !fallbackDesempenhoSolicitado && (amostrasComQuedas >= 3 || amostrasTravadas >= 3)){
             const reason = amostrasComQuedas >= 3 ? "dropped-frames" : "decoder-stall"
@@ -303,6 +373,46 @@ export function montarPlayerMSE(container, clientId) {
             }
             status.textContent = "Desempenho insuficiente. Solicitando VP8..."
         }
+    }
+
+    function diagnosticarBuffer(){
+        if(!started || video.paused || !video.buffered.length){
+            amostraBufferAnterior = null
+            return
+        }
+
+        const agora = performance.now()
+        const posicao = video.currentTime
+        const fim = video.buffered.end(video.buffered.length - 1)
+
+        const atual = {
+            tempo: agora,
+            posicao,
+            fim,
+            atraso: fim - posicao
+        }
+        if(amostraBufferAnterior){
+            const anterior = amostraBufferAnterior
+
+            const tempoReal = (atual.tempo - anterior.tempo) / 1000
+            const avancoVideo = atual.posicao - anterior.posicao
+            const avancoBuffer = atual.fim - anterior.fim
+            const variacaoAtraso = atual.atraso - anterior.atraso
+            const mudancaBrusca = variacaoAtraso < -0.4
+
+            if(mudancaBrusca || agora - ultimoLogDiagnostico >= 5000){
+                log(
+                    `[Drift] Atraso: ${atual.atraso.toFixed(3)}s | ` +
+                    `Tempo real: ${tempoReal.toFixed(3)}s | ` +
+                    `Video: +${avancoVideo.toFixed(3)}s | ` +
+                    `Buffer: +${avancoBuffer.toFixed(3)}s | ` +
+                    `Variação: ${variacaoAtraso.toFixed(3)}s` +
+                    `Velocidade: ${video.playbackRate}`
+                )
+                ultimoLogDiagnostico = agora
+            }
+        }
+        amostraBufferAnterior = atual
     }
 
     function conectar() {
@@ -540,6 +650,10 @@ export function montarPlayerMSE(container, clientId) {
         })
     }
 
+    
+    video.addEventListener("pause", () => {
+        if(document.hidden && started) pausadoPorOcultacao = true
+    })
 
     video.addEventListener("error", () => {
         if (socket) {
@@ -549,6 +663,55 @@ export function montarPlayerMSE(container, clientId) {
             );
         }
     });
+
+    document.addEventListener("visibilitychange", () => {
+        if(document.hidden){
+            if(started && !video.paused){
+                pausadoPorOcultacao = true
+            }
+            return
+        }
+
+        if(!socket || !mediaSource) return
+
+        if(!started){
+            acompanharBuffer()
+            return
+        }
+
+        if(video.paused && !pausadoPorOcultacao) return
+        
+        const buffered = video.buffered
+        
+        if(!buffered.length) return
+
+        const indice = buffered.length - 1
+        const inicio = buffered.start(indice)
+        const fim = buffered.end(indice)
+
+        const atraso = fim - video.currentTime
+
+        if(atraso > 4 && !video.seeking){
+            video.currentTime = Math.max(inicio, fim - 2)
+
+            ultimoSeekEm = performance.now()
+
+            log(
+                `[Visibilidade] Retornando ao vivo.` + 
+                `Atraso anterior: ${atraso.toFixed(2)}s`
+            )
+        }
+        if(video.paused && pausadoPorOcultacao){
+            video.play().then(() => {
+                pausadoPorOcultacao = false
+                log("[Visibilidade] Reprodução retomada.")
+            }).catch(error => {
+                log(`[Visibilidade] Falha ao retomar: ${error.message}`)
+            })
+        }else{
+            pausadoPorOcultacao = false
+        }
+    })
 
     soundButton.addEventListener("click", () => {
         somAtivado = !somAtivado
@@ -567,9 +730,11 @@ export function montarPlayerMSE(container, clientId) {
     );
 
     const monitorarInterval = window.setInterval(monitorarReproducao, 5000)
+    const diagnosticoInterval = window.setInterval(diagnosticarBuffer, 5000)
 
     window.addEventListener("pagehide", () => {
         clearInterval(monitorarInterval)
+        clearInterval(diagnosticoInterval)
         desconectar()
     });
 }

@@ -10,6 +10,8 @@ const viewerCount = document.getElementById("viewer-count")
 
 const streamMetrics = document.getElementById("stream-metrics")
 
+const audioMode = document.getElementById("audio-mode")
+
 let captureStream = null
 let recorder = null
 
@@ -32,7 +34,6 @@ let trocaCodecPendente = null
 const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
 const socket = new WebSocket(`${protocol}//${window.location.host}/ws-mse`)
 
-startButton.disabled = true
 stopButton.disabled = true
 
 function enviar(mensagem){
@@ -230,6 +231,13 @@ function iniciarGravador(mimeType){
     })
     gravador.start(1000)
 
+    console.log("[Encoder] Informações: ", {
+        codec: gravador.mimeType,
+        videoBitrate: gravador.videoBitsPerSecond,
+        audioBitrate: gravador.audioBitsPerSecond,
+        resolucao: captureStream.getVideoTracks()[0]?.getSettings()
+    })
+
     const nomeCodec = mimeType.includes("av01") ? "AV1" : "VP8"
     const temAudio = mimeType.includes("opus")
     statusHTML.textContent = `Captura ativa (${nomeCodec}${temAudio ? " + Opus" : ""}).`
@@ -258,19 +266,33 @@ async function iniciarCaptura() {
     try{
         console.log("[Demo Live] Solicitando captura...")
 
-        const stream = await navigator.mediaDevices.getDisplayMedia({
+        const modoAudio = audioMode.value
+
+        const capturarAudio = modoAudio !== "none"
+
+        const opcoesCaptura = {
             video: {
                 frameRate: { ideal: 30 },
                 width: { ideal: 1920 },
                 height: { ideal: 1080 }
             },
-            audio: {
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: false,
-                channelCount: { ideal: 2 }
-            }
-        })
+            audio: modoAudio === "none"
+                ? false
+                : modoAudio === "system"
+                ? true 
+                :{
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false,
+                    channelCount: { ideal:2 }
+                },
+            systemAudio: modoAudio === "system" ? "include" : "exclude",
+            windowAudio: modoAudio === "system" ? "system" : "exclude"
+        }
+
+        console.log("[Captura] Modo solicitado: ", modoAudio)
+
+        const stream = await navigator.mediaDevices.getDisplayMedia(opcoesCaptura)
 
         if(socket.readyState !== WebSocket.OPEN){
             stream.getTracks().forEach(track => track.stop())
@@ -278,6 +300,23 @@ async function iniciarCaptura() {
         }
 
         captureStream = stream
+
+        audioMode.disabled = true
+
+        const videoTrackCapturada = stream.getVideoTracks()[0]
+        const audioTrackCapturada = stream.getAudioTracks()[0]
+
+        console.log("[Captura] Fonte de video: ", {
+            superficie: videoTrackCapturada?.getSettings().displaySurface,
+            nome: videoTrackCapturada?.label
+        })
+
+        console.log("[Captura] Fonte de audio: ", {
+            disponivel: !!audioTrackCapturada,
+            nome: audioTrackCapturada?.label,
+            configuracoes: audioTrackCapturada?.getSettings()
+        })
+
 
         const audioTrack = stream.getAudioTracks()[0]
 
@@ -293,6 +332,14 @@ async function iniciarCaptura() {
                 })
             }catch(error){
                 console.warn("[Audio]Falha ao configurar audio: ", error.name, error.message, error.constraint)
+            }
+
+            const settings = audioTrack.getSettings()
+
+            console.log("[Audio] Configuração final: ", settings)
+
+            if(settings.echoCancellation !== false || settings.noiseSuppression !== false || settings.autoGainControl !== false){
+                console.warn("[Audio] Atenção: processamento de audio permanece ativo.")
             }
         }
 
@@ -334,6 +381,8 @@ function finalizarCaptura(){
         captureStream.getTracks().forEach(track => track.stop())
         captureStream = null
     }
+
+    audioMode.disabled = false
 
     recorder = null
 
