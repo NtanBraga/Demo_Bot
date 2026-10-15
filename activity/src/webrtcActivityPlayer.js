@@ -216,19 +216,32 @@ export function montarPlayerWebRTC(container, clientId){
             return
         }
 
-        if (typeof window.RTCPeerConnection !== 'function') {
-            statusRTC.textContent = 'WebRTC não disponível nesta Activity. Utilize o player MSE.'
+        const RTCCtor = typeof window.RTCPeerConnection === 'function'
+                ? window.RTCPeerConnection
+                : typeof window.webkitRTCPeerConnection === 'function'
+                    ? window.webkitRTCPeerConnection
+                    : null
 
-            log('RTCPeerConnection indisponível neste ambiente.')
+        if (!RTCCtor) {
+            statusRTC.textContent = 'Nenhum construtor WebRTC disponível nesta Activity.'
+            log('WebRTC indisponível neste ambiente.')
             return
         }
 
+        log(`Construtor selecionado: ${RTCCtor.name}`)
+
         closePeer()
 
-        const pc = new RTCPeerConnection({
-            iceServers,
-            iceTransportPolicy: 'all'
-        })
+        let pc
+
+        try {
+            pc = new RTCCtor({iceServers,iceTransportPolicy: 'all'})
+        } catch (error) {
+            statusRTC.textContent ='Não foi possível criar a conexão WebRTC.'
+
+            log(`Erro ao criar RTCPeerConnection: ${error.message}`)
+            return
+        }
 
         connection = pc
 
