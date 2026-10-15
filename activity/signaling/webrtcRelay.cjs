@@ -108,16 +108,16 @@ function validCandidate(candidate){
     return candidate === null || (
         candidate &&
         typeof candidate === 'object' &&
-        typeof candidate.candidate === 'string' &&
-        candidate.candidate.length <= 4096 &&
-        (candidate.sdpMid == null ||
+        !Array.isArray(candidate) &&
+        typeof candidate.candidate === 'string' && candidate.candidate.length <= 4096 
+        &&(candidate.sdpMid == null ||
             (typeof candidate.sdpMid === 'string' && candidate.sdpMid.length <= 128)
-        ) &&
-        (candidate.usernameFragment == null ||
-            (
-                typeof candidate.usernameFragment === 'string' && candidate.usernameFragment.length <= 256
-            )
-        )
+        ) 
+        &&(candidate.sdpMLineIndex == null ||
+            (Number.isInteger(candidate.sdpMLineIndex) &&candidate.sdpMLineIndex >= 0 && candidate.sdpMLineIndex < 32)
+        ) 
+        &&( candidate.usernameFragment == null ||
+            (typeof candidate.usernameFragment === 'string' && candidate.usernameFragment.length <= 256))
     )
 }
 
