@@ -19,6 +19,11 @@ export default defineConfig(({mode}) => {
                     target: "ws://127.0.0.1:3001",
                     ws: true,
                     changeOrigin: false
+                },
+                "/ws-webrtc": {
+                    target: "ws://127.0.0.1:3003",
+                    ws: true,
+                    changeOrigin: false
                 }
             }
         }
