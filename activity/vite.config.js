@@ -10,6 +10,11 @@ export default defineConfig(({mode}) => {
                 env.CLOUDFLARE_TUNNEL
             ],
             proxy: {
+                "/ws-webrtc": {
+                    target: "ws://127.0.0.1:3003",
+                    ws: true,
+                    changeOrigin: false
+                },
                 "/ws-mse": {
                     target: "ws://127.0.0.1:3002",
                     ws: true,
@@ -17,11 +22,6 @@ export default defineConfig(({mode}) => {
                 },
                 "/ws": {
                     target: "ws://127.0.0.1:3001",
-                    ws: true,
-                    changeOrigin: false
-                },
-                "/ws-webrtc": {
-                    target: "ws://127.0.0.1:3003",
                     ws: true,
                     changeOrigin: false
                 }

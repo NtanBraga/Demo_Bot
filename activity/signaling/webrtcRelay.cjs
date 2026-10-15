@@ -46,7 +46,8 @@ const viewers = new Map()
 function equalToken(value, expected){
     if(typeof value !== 'string' || value.length > 4096) return false
 
-    const a = crypto.createHash('sha256').update(expected).digest()
+    const a = crypto.createHash('sha256').update(value).digest()
+    const b = crypto.createHash('sha256').update(expected).digest()
 
     return crypto.timingSafeEqual(a, b)
 }
@@ -75,7 +76,7 @@ function iceServers(){
 function send(ws, data){
     if(!ws || ws.readyState !== WebSocket.OPEN)return
 
-    if(ws.bufferedAmout > 512 * 1024){
+    if(ws.bufferedAmount > 512 * 1024){
         ws.terminate()
         return
     }
@@ -89,7 +90,7 @@ function reject(ws, reason = 'Mensagem invalida ou acesso negado.'){
         message: reason
     })
 
-    ws.close(1000, 'Politica de acesso.')
+    ws.close(1008, 'Politica de acesso.')
 }
 
 function validSdp(sdp, type){
@@ -114,7 +115,7 @@ function validCandidate(candidate){
         ) &&
         (candidate.usernameFragment == null ||
             (
-                typeof candidate.usernameFragment === 'string' && candidate.usernameFragment.length > 256
+                typeof candidate.usernameFragment === 'string' && candidate.usernameFragment.length <= 256
             )
         )
     )
@@ -230,7 +231,7 @@ wss.on('connection', ws => {
                 }
 
                 ws.role = 'viewer'
-                ws.viewerId = crypto.randomUUID
+                ws.viewerId = crypto.randomUUID()
 
                 viewers.set(ws.viewerId, ws)
                 clearTimeout(authTimeout)
@@ -291,8 +292,8 @@ wss.on('connection', ws => {
     ws.on('close', () => {
         clearTimeout(authTimeout)
 
-        if(ws.role === 'viwer'){
-            if(viewers.get(ws.viewerId === ws)){
+        if(ws.role === 'viewer'){
+            if(viewers.get(ws.viewerId) === ws){
                 viewers.delete(ws.viewerId)
             }
             send(publisher, {

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo Live - WebRTC Publisher</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #17191f;
+            color: white;
+            margin: 32px;
+        }
+        main{
+            max-width: 1100px;
+            margin: auto;
+        }
+        .controls{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin: 18px 0;
+            align-items: center;
+        }
+        input, select, button {
+            padding: 10px;
+        }
+        button {
+            cursor: pointer;
+        }
+        button:disabled{
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+        video {
+            display: block;
+            width: 100%;
+            max-height: 600px;
+            background: black;
+        }
+        pre{
+            background: #101116;
+            padding: 15px;
+            height: 230px;
+            overflow: auto;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Demo live - Transmissor WebRTC</h1>
+        <p id="webrtc-status">Aguardando conexão.</p>
+
+        <div class="controls">
+            <input id="publisher-key" type="password" placeholder="Chave de transmissor" autocomplete="off">
+            <button id="connect-webrtc">Conectar sinalização</button>
+        </div>
+        <div class="controls">
+            <label for="audio-mode">Captura de audio:</label>
+            <select id="audio-mode">
+                <option value="tab">Audio da aba</option>
+                <option value="system">Audio do sistema</option>
+                <option value="none">Sem audio</option>
+            </select>
+
+            <button id="start-webrtc" disabled>Compartilhar tela</button>
+            <button id="stop-webrtc" disabled>Parar compartilhamento</button>
+        </div>
+
+        <h2>Pré-visualização local</h2>
+
+        <video id="preview-webrtc" autoplay muted playsinline></video>
+
+        <h2>Diagnóstico WebRTC</h2>
+
+        <pre id="webrtc-logs"></pre>
+
+    </main>
+
+    <script type="module" src="./src/webrtcPublisher.js"></script>
+</body>
+</html>
