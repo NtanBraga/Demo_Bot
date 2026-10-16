@@ -51,6 +51,11 @@ function closePeer(viewerId){
 
     if(!entry) return
 
+    if(entry.monitorTimer !== null){
+        clearInterval(entry.monitorTimer)
+        entry.monitorTimer = null
+    }
+
     peers.delete(viewerId)
 
     entry.pc.onicecandidate = null
@@ -111,6 +116,85 @@ async function drainCandidates(entry){
     }
 }
 
+function startSendMonitor(viewerId, entry){
+    if(entry.monitorTimer){
+        clearInterval(entry.monitorTimer)
+    }
+
+    let previous = null
+    let codecLogged = false
+
+    entry.monitorTimer = setInterval(async () => {
+        if(peers.get(viewerId) !== entry || entry.pc.connectionState !== 'connected') return
+        
+        try{
+            const stats = await entry.pc.getStats()
+
+            if(peers.get(viewerId) !== entry) return
+
+            const reports = [...stats.values()]
+
+            const outbound = reports.find(report => 
+                report.type === 'outbound-rtp' && (report.kind === 'video' || report.mediaType === 'video')
+            )
+
+            const source = reports.find(report => report.type === 'media-source' && report.kind === 'video')
+
+            if(!outbound || typeof outbound.framesEncoded !== 'number') return
+
+            if (!codecLogged) {
+                const codec = stats.get(outbound.codecId)
+
+                log(
+                    `Codec de vídeo: ${codec?.mimeType ?? 'n/d'}, ` +
+                    `Encoder: ${outbound.encoderImplementation ?? 'n/d'}`
+                )
+
+                codecLogged = true
+            }
+
+            const current = {
+                time: performance.now(),
+                framesEncoded: outbound.framesEncoded,
+                totalEncodeTime: outbound.totalEncodeTime ?? 0
+            }
+
+            if(previous){
+
+                const targetBitrate = outbound.targetBitrate != null
+                    ? `${(outbound.targetBitrate / 1_000_000).toFixed(2)} Mbps`
+                    : 'n/d'
+
+                const seconds = (current.time - previous.time) / 1000
+
+                const fpsEncoded = (current.framesEncoded - previous.framesEncoded) / seconds
+
+                const encodedFrames = current.framesEncoded - previous.framesEncoded
+
+                const encodeTime =
+                    current.totalEncodeTime - previous.totalEncodeTime
+
+                const avgEncodeMs = encodedFrames > 0
+                    ? (encodeTime / encodedFrames) * 1000
+                    : 0
+
+                log(
+                    `ENVIO ${viewerId.slice(0, 8)}: ` +
+                    `FPS capturados=${source?.framesPerSecond ?? 'n/d'},` +
+                    `FPS codificados=${fpsEncoded.toFixed(1)}, ` +
+                    `Limitação=${outbound.qualityLimitationReason ?? 'n/d'}` +
+                    `Resolução=${outbound.frameWidth ?? '?'}x${outbound.frameHeight ?? '?'}` +
+                    `Tempo médio de codificação=${avgEncodeMs.toFixed(1)}ms, ` +
+                    `Bitrate alvo=${targetBitrate}, `
+                )
+            }
+            previous = current
+        }catch(e){
+            log(`Erro no monitor de envio: ${e.message}`)
+        }
+    }, 3000)
+}
+
 async function openPeer(viewerId){
     if(!captureStream || !viewers.has(viewerId) || peers.has(viewerId)) return
 
@@ -127,7 +211,8 @@ async function openPeer(viewerId){
         draining: false,
         pendingCandidates: [],
         pendingLocalCandidates: [],
-        offerSent: false
+        offerSent: false,
+        monitorTimer: null
     }
 
     peers.set(viewerId, entry)
@@ -152,17 +237,94 @@ async function openPeer(viewerId){
     pc.onconnectionstatechange = () => {
         log(`Conexão ${viewerId.slice(0, 8)}:` + pc.connectionState)
 
+        if(pc.connectionState === 'connected'){
+            startSendMonitor(viewerId, entry)
+        }
+
         if(pc.connectionState === 'failed'){
             log("Conexão WebRTC falhou." + "Verifique os candidatos ICE e o TURN")
         }
     }
 
     try{
+        let videoSender = null
+
         for(const track of stream.getTracks()){
-            if(track.readyState === 'live'){
-                pc.addTrack(track, stream)
+            if(track.readyState !== 'live') continue
+
+            const sender = pc.addTrack(track, stream)
+
+            if(track.kind === 'video'){
+                videoSender = sender
             }
         }
+
+        if(videoSender){
+            const transceiver = pc.getTransceivers().find(t => t.sender === videoSender)
+
+            const codecPriority = [
+                'video/h264',
+                'video/av1',
+                'video/vp8'
+            ]
+
+            const sendCodecs = RTCRtpSender.getCapabilities('video')?.codecs ?? []
+            const receiveCodecs = RTCRtpReceiver.getCapabilities('video')?.codecs ?? []
+
+            const sendTypes = new Set(sendCodecs.map(codec => codec.mimeType.toLowerCase()))
+            const preferredCodecs = codecPriority.flatMap(type => {
+                if(!sendTypes.has(type)) return []
+
+                return receiveCodecs.filter(codec => codec.mimeType.toLowerCase() === type)
+            })
+
+            const auxiliatyTypes = new Set([
+                'video/rtx',
+                'video/red',
+                'video/ulpfec',
+                'video/flexfec-03'
+            ])
+
+            const auxiliatyCodecs = receiveCodecs.filter(codec =>
+                auxiliatyTypes.has(codec.mimeType.toLowerCase())
+            )
+
+            if(preferredCodecs.length > 0 && typeof transceiver?.setCodecPreferences === 'function'){
+                try{
+                    transceiver.setCodecPreferences([
+                        ...preferredCodecs,
+                        ...auxiliatyCodecs
+                    ])
+                    log('Prioridade de codecs: ' + [...new Set(preferredCodecs.map(c => c.mimeType))].join(' -> '))
+                }catch(e){
+                    log(`Erro ao configurar codecs: ${e.message}`)
+                }
+            }else{
+                log('Usando a negociação padrão de codecs WebRTC.')
+            }
+        }
+
+        if (videoSender) {
+            const params = videoSender.getParameters()
+
+            if (params.encodings?.length) {
+                try {
+                    params.encodings[0].maxBitrate = 8_000_000
+
+                    await videoSender.setParameters(params)
+
+                    log(
+                        `Bitrate máximo permitido: ` +
+                        `${videoSender.getParameters().encodings[0].maxBitrate / 1_000_000} Mbps`
+                    )
+                } catch (error) {
+                    log(`Erro ao configurar bitrate: ${error.message}`)
+                }
+            } else {
+                log('O navegador não disponibilizou parâmetros de encoding.')
+            }
+        }
+
 
         const offer = await pc.createOffer()
 
@@ -351,7 +513,7 @@ async function startCapture(){
 
     const options = {
         video: {
-            frameRate: { ideal: 30},
+            frameRate: { ideal: 30, max: 30},
             width: { ideal: 1920 },
             height: { ideal: 1080 }
         },
@@ -385,6 +547,10 @@ async function startCapture(){
         if(!videoTrack){
             throw new Error('Nenhuma faixa de video foi capturada.')
         }
+
+        videoTrack.contentHint = ''
+
+        log(`Preferencia de codificação: ${videoTrack.contentHint}`)
 
         videoTrack.addEventListener('ended', () => {
             if(captureStream === stream){

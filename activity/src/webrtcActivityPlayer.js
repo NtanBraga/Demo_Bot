@@ -51,7 +51,7 @@ export function montarPlayerWebRTC(container, clientId){
         <pre id="rtc-logs" style="white-space:pre-wrap;max-height:200px;overflow:auto;"></pre>
         `
 
-        container.appendChild(section);
+    container.appendChild(section);
 
     const statusRTC = section.querySelector('#rtc-status');
     const keyInput = section.querySelector('#rtc-key');
@@ -112,6 +112,8 @@ export function montarPlayerWebRTC(container, clientId){
 
     function closePeer(){
         const oldConnection = connection
+
+        stopPerformanceMonitor()
 
         connection = null
 
@@ -206,6 +208,69 @@ export function montarPlayerWebRTC(container, clientId){
         }catch(e){
             log(`Diagnostico ICE: ${e.message}`)
         }
+    }
+
+    let performanceTimer = null
+
+    function stopPerformanceMonitor(){
+        if(performanceTimer !== null){
+            clearInterval(performanceTimer)
+            performanceTimer = null
+        }
+    }
+
+    function startPerformanceMonitor(pc){
+        stopPerformanceMonitor()
+
+        let previous = null
+
+        performanceTimer = setInterval(async () => {
+            if(connection !== pc || pc.connectionState !== 'connected') return
+
+            try{
+                const stats = await pc.getStats()
+
+                if(connection !== pc) return
+
+                const videoStats = [...stats.values()].find(report => 
+                    report.type === 'inbound-rtp' && (report.kind === 'video' || report.mediaType === 'video')
+                )
+
+                if(!videoStats) return
+
+                const quality = video.getVideoPlaybackQuality?.()
+
+                const current = {
+                    time: performance.now(),
+                    decoded: videoStats.framesDecoded ?? 0,
+                    dropped: videoStats.framesDropped ?? 0,
+                    packetsLost: videoStats.packetsLost ?? 0,
+                    bytes: videoStats.bytesReceived ?? 0,
+                    displayDropped: quality?.droppedVideoFrames ?? 0
+                }
+
+                if(previous){
+                    const seconds = (current.time - previous.time) / 1000
+                    const fps = (current.decoded - previous.decoded) / seconds
+                    const bitrate = (current.bytes - previous.bytes) * 8 / seconds / 1000
+
+                    const decoderDrops = current.dropped - previous.dropped
+                    const displayDrops = current.displayDropped - previous.displayDropped
+                    const lostPackets = current.packetsLost - previous.packetsLost
+
+                    log(
+                        `Desempenho: FPS decodificados=${fps.toFixed(1)},` +
+                        `bitrate=${bitrate.toFixed(0)} kbps,` +
+                        `drops decoder=${decoderDrops},` +
+                        `drops exibição=${displayDrops},` +
+                        `pacotes perdidos=${lostPackets}`
+                    )
+                }
+                previous = current
+            }catch(e){
+                log(`Erro no monitor: ${e.message}`)
+            }
+        }, 3000)
     }
 
     async function receiveOffer(description){
@@ -308,6 +373,7 @@ export function montarPlayerWebRTC(container, clientId){
 
             if(state === 'connected') {
                 statusRTC.textContent = 'Transmissão WebRTC conectada.'
+                startPerformanceMonitor(pc)
             }
             if(state === 'disconnected'){
                 statusRTC.textContent = 'Conexão temporariamente interrompida.'
