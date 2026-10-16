@@ -251,6 +251,18 @@ wss.on('connection', ws => {
             return reject(ws, 'Autenticação invalida.')
         }
         if(ws.role === 'publisher'){
+
+            if(msg.type === 'publisher:stop'){
+                console.log('[WebRTC] Transmissor encerrou a captura.')
+
+                for(const viewer of viewers.values()){
+                    send(viewer, {
+                        type: 'stream:ended'
+                    })
+                }
+                return
+            }
+
             const target = typeof msg.to === 'string' ? viewers.get(msg.to) : null
 
             if(msg.type === 'webrtc:offer' && target && validSdp(msg.sdp, 'offer')){

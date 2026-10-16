@@ -65,6 +65,13 @@ function stopCapture(){
 
     captureStream = null
 
+    if(stream && authenticated){
+        send({
+            type: 'publisher:stop'
+        })
+        log(`Encerramento comunicado aos espectadores.`)
+    }
+
     for(const viewerId of peers.keys()){
         closePeer(viewerId)
     }
