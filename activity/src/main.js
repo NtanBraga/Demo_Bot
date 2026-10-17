@@ -1,5 +1,4 @@
-import { montarPlayerMSE } from './mseActivityPlayer'
-import './style.css'
+import './assets/css/style.css'
 import { DiscordSDK } from "@discord/embedded-app-sdk"
 import { montarPlayerWebRTC } from './webrtcActivityPlayer'
 
@@ -7,11 +6,16 @@ const CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID
 
 document.querySelector('#app').innerHTML = `
   <main>
-    <h1>Demo Live</h1>
-    <h2>Compartilhamento de tela</h2>
+    <header class="app-header">
+      <div class="app-brand">
+        <h1>Demo Live</h1>
+        <h2>Compartilhamento de tela</h2>
+      </div>
 
-
-    <p id="discord-status">Aguardando conexão com Discord...</p>
+      <p id="discord-status" data-state="connecting" role="status" aria-live="polite">
+        Conectando ao Discord...
+      </p>
+    </header>
   </main>
 `
 
@@ -42,7 +46,6 @@ async function iniciarActivity(){
 
     const container = document.querySelector("#app main")
 
-    montarPlayerMSE(container, CLIENT_ID)
     montarPlayerWebRTC(container, CLIENT_ID)
 
   }catch(e){

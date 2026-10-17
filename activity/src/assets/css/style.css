@@ -1,0 +1,164 @@
+
+:root {
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  color-scheme: dark;
+
+  color: #f1f5f9;
+  background: #10141c;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100svh;
+}
+
+#app {
+  width: 100%;
+  min-height: 100svh;
+}
+
+#app > main {
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+#app h1 {
+  margin: 0 0 6px;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+
+#app h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 400;
+  color: #aebbd0;
+}
+
+#discord-status {
+  margin: 0 0 18px;
+  font-size: 14px;
+  color: #aebbd0;
+}
+
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 8px 4px 22px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #2d3443;
+}
+
+.app-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+#app .app-header h1 {
+  margin: 0;
+  font-size: clamp(32px, 4vw, 52px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.045em;
+  background: linear-gradient(
+    110deg,
+    #23b437 0%,
+    #547cb1 50%,
+    #4034e0 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+#app .app-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #9caec7;
+}
+
+.app-header #discord-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid #40495b;
+  border-radius: 999px;
+  background: #222938;
+  color: #aebbd0;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.app-header #discord-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.app-header #discord-status[data-state="connected"] {
+  color: #55d9a6;
+  border-color: #27675c;
+  background: #19352f;
+}
+
+.app-header #discord-status[data-state="connecting"] {
+  color: #fbbf24;
+}
+
+.app-header #discord-status[data-state="error"] {
+  color: #f87171;
+  border-color: #753b43;
+  background: #48242b;
+}
+
+@media (max-width: 600px) {
+  .app-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .app-header #discord-status {
+    align-self: flex-start; 
+  }
+}
+
+
+@media (max-width: 800px) {
+  #app > main {
+    padding: 12px;    
+  }
+
+  #app h1 {
+    font-size: 26px;
+  }
+
+  #app h2 {
+    font-size: 16px;
+  }
+}

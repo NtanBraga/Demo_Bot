@@ -1,14 +1,16 @@
+import './assets/css/webrtcActivityPlayer.css'
+
 export function montarPlayerWebRTC(container, clientId){
     if(!container) throw new Error('Container do WebRTC não encontrado.')
     if(!/^\d{17,20}$/.test(String(clientId))) throw new Error('Client ID do Discord invalido')
 
     const section = document.createElement('section')
-    
+    section.classList.add('demo-live-player')
 
     section.innerHTML = 
         `
         <hr>
-        <h3>Player WebRTC (teste)</h3>
+        <h3>Central Player de Transmissões</h3>
 
         <p id="rtc-status">
             Informe a chave para assistir.
@@ -29,50 +31,88 @@ export function montarPlayerWebRTC(container, clientId){
             Desconectar
         </button>
 
-        <button id="rtc-sound" disabled>
-            Ativar som
-        </button>
-
-        <div id="rtc-stream-catalog" style="margin-top: 16px;">
+        <div id="rtc-stream-catalog">
             <h4>Transmissões disponiveis</h4>
             <p id="rtc-stream-summary">Conecte-se para consultar a lista.</p>
             <div id="rtc-stream-list"></div>
         </div>
 
-        <video
-            id="rtc-video"
-            autoplay
-            muted
-            playsinline
-            controls
-            style="
-                display:block;
-                width:100%;
-                max-width:960px;
-                background:black;
-                margin-top:12px;
-            "
-        ></video>
+        <div id="rtc-player-panel">
+            <div id="rtc-player-header">
+                <strong>Reprodução WebRTC</strong>
+                <span id="rtc-player-state" data-state="idle" role="status" aria-live="polite">
+                    <span id="rtc-player-state-label">
+                        Aguardando
+                    </span>
+                </span>
+            </div>
+            <div id="rtc-video-frame">
+                <video
+                    id="rtc-video"
+                    autoplay
+                    muted
+                    playsinline
+                    controls
+                ></video>
 
-        <div id="rtc-codec-settings" style="margin-top: 16px;">
-            <h4>Configurações de video</h4>
-            <label style="display: block; margin-bottom: 10px;">
-                <input type="checkbox" id="rtc-codec-auto">
-                Seleção automatica de codec
-            </label>
-            <label for="rtc-codec-select">
-                Codec de video:
-            </label>
-            <select id="rtc-codec-select">
-                <option value="h264">H.264</option>
-                <option value="av1">AV1</option>
-                <option value="vp8">VP8</option>
-            </select>
-            <p id="rtc-codec-info" style="font-size: 13px;">Carregando preferências</p>
+                <div id="rtc-video-placeholder">
+                    Selecione uma transmissão para assistir.
+                </div>
+            </div>
+
+            <div id="rtc-player-controls">
+                <span id="rtc-current-stream">
+                    Nenhuma transmissão selecionada
+                </span>
+
+                <button id="rtc-sound" type="button" disabled>
+                    Ativar som
+                </button>
+            </div>
         </div>
-            
 
-        <pre id="rtc-logs" style="white-space:pre-wrap;max-height:200px;overflow:auto;"></pre>
+        <details id="rtc-codec-settings">
+            <summary>
+                <span>Configurações de vídeo</span>
+                <span id="rtc-codec-summary">
+                    Automático
+                </span>
+            </summary>
+
+            <div class="rtc-codec-content">
+                <label class="rtc-codec-auto-label">
+                    <input type="checkbox" id="rtc-codec-auto">
+                    Seleção automática de codec
+                </label>
+
+                <label for="rtc-codec-select">
+                    Codec manual:
+                </label>
+
+                <select id="rtc-codec-select">
+                    <option value="h264">H.264</option>
+                    <option value="av1">AV1</option>
+                    <option value="vp8">VP8</option>
+                </select>
+
+                <p id="rtc-codec-info">
+                    Carregando preferências...
+                </p>
+
+                <p id="rtc-codec-current">
+                    Codec recebido: aguardando transmissão.
+                </p>
+            </div>
+        </details>
+            
+        <details id="rtc-diagnostics">
+            <summary>
+                Diagnóstico técnico
+            </summary>
+
+            <pre id="rtc-logs"></pre>
+        </details>
+
         `
 
 
@@ -85,6 +125,12 @@ export function montarPlayerWebRTC(container, clientId){
     const disconnectButton = section.querySelector('#rtc-disconnect');
     const soundButton = section.querySelector('#rtc-sound');
 
+    const playerPanel = section.querySelector('#rtc-player-panel')
+    const currentStream = section.querySelector('#rtc-current-stream')
+    const playerState = section.querySelector('#rtc-player-state')
+    const playerStateLabel = section.querySelector('#rtc-player-state-label')
+    const videoPlaceholder = section.querySelector('#rtc-video-placeholder')
+
     const video = section.querySelector('#rtc-video');
     const logs = section.querySelector('#rtc-logs');
 
@@ -94,6 +140,8 @@ export function montarPlayerWebRTC(container, clientId){
     const codecAuto = section.querySelector('#rtc-codec-auto');
     const codecSelect = section.querySelector('#rtc-codec-select');
     const codecInfo = section.querySelector('#rtc-codec-info');
+    const codecSummary = section.querySelector('#rtc-codec-summary')
+    const codecCurrent = section.querySelector('#rtc-codec-current')
 
     const CODEC_STORAGE_KEY = 'demo_live:codec-preferences:v1'
 
@@ -142,11 +190,66 @@ export function montarPlayerWebRTC(container, clientId){
         logs.scrollTop = logs.scrollHeight;
     }
 
+
+    const PLAYER_STATES = {
+        idle: {
+            label: 'Aguardando',
+            placeholder: 'Selecione uma transmissão para assistir.'
+        },
+        connecting: {
+            label: 'Conectando',
+            placeholder: 'Estabelecendo conexão WebRTC...'
+        },
+        connected: {
+            label: 'Conectado',
+            placeholder: 'Aguardando reprodução do vídeo...'
+        },
+        live: {
+            label: 'Reproduzindo',
+            placeholder: ''
+        },
+        reconnecting: {
+            label: 'Reconectando',
+            placeholder: 'Tentando restabelecer a conexão...'
+        },
+        failed: {
+            label: 'Falha',
+            placeholder: 'Não foi possível estabelecer a conexão.'
+        },
+        ended: {
+            label: 'Encerrada',
+            placeholder: 'O transmissor encerrou a transmissão.'
+        },
+        leaving: {
+            label: 'Saindo',
+            placeholder: 'Saindo da transmissão...'
+        }
+    }
+
+    function setPlayerState(state) {
+        const config = PLAYER_STATES[state]
+
+        if (!config) return
+
+        playerState.dataset.state = state
+        playerStateLabel.textContent = config.label
+
+        videoPlaceholder.textContent = config.placeholder
+    }
+
     function renderStreamList(items){
 
         if(Array.isArray(items)){
             latestStreams = items
         }
+
+        currentStream.textContent = leavingStream
+            ? 'Saindo da transmissão...'
+            : selectedStreamId
+                ? `Transmissão ${selectedStreamId.slice(0, 8)}`
+                : pendingStreamId
+                    ? `Conectando a transmissão ${pendingStreamId.slice(0, 8)}`
+                    : 'Nenhuma tranmissão selecionada'
 
         const streams = latestStreams
             .filter(stream => stream && 
@@ -163,6 +266,7 @@ export function montarPlayerWebRTC(container, clientId){
         if(streams.length === 0){
             const empty = document.createElement('p')
 
+            empty.className = 'rtc-stream-empty'
             empty.textContent = 'Nenhuma transmissão cadastrada no momento.'
 
             streamList.appendChild(empty)
@@ -170,48 +274,76 @@ export function montarPlayerWebRTC(container, clientId){
         }
 
         for(const stream of streams){
-            const card = document.createElement('div')
+            const isLive = stream.status === 'live'
+            const isWatching = selectedStreamId === stream.id
+            const isPending = pendingStreamId === stream.id
 
-            card.style.cssText = `
-                padding: 10px;
-                margin-bottom: 8px;
-                border: 1px solid #777;
-                border-radius: 8px;
-            `
+            const card = document.createElement('article')
+            card.className = 'rtc-stream-card'
+
+            if(isLive) card.classList.add('is-live')
+            if(isWatching) card.classList.add('is-selected')
+
+
+            const header = document.createElement('div')
+            header.className = 'rtc-stream-card__header'
 
             const title = document.createElement('strong')
-
+            title.className = 'rtc-stream-card__title'
             title.textContent = `Transmissão ${stream.id.slice(0, 8)}`
 
-            const state = document.createElement('div')
+            const status = document.createElement('span')
+            status.className = 'rtc-stream-card__status'
 
-            state.textContent = stream.status === 'live'
-                ? '● Ao vivo'
-                : '○ Aguardando captura'
+            status.textContent = isLive
+                ? 'Ao vivo'
+                : 'Aguardando'
 
+            header.append(title, status)
 
-            const action = document.createElement('button')
-            const isWatching = selectedStreamId === stream.id
+            const footer = document.createElement('div')
+            footer.className = 'rtc-stream-card__footer'
 
-            action.style.marginTop = '8px'
+            const description = document.createElement('span')
+            description.className = 'rtc-stream-card__description'
+            
 
             if(isWatching){
-                action.textContent = leavingStream ? 'Saindo...' : 'Sair'
+                description.textContent = 'Assistindo agora'
+            }else if(isPending){
+                description.textContent = 'Conectando...'
+            }else {
+                description.textContent = isLive
+                    ? 'Disponivel'
+                    : 'Captura não iniciada'
+            }
+
+            const action = document.createElement('button')
+            action.type = 'button'
+            action.className = 'rtc-stream-card__action'
+
+            if(isWatching){
+                action.textContent = leavingStream
+                    ? 'Saindo...'
+                    : 'Sair'
+                action.classList.add('is-leave')
                 action.disabled = leavingStream
-
                 action.addEventListener('click', leaveStream)
+            }else if(isPending){
+                action.textContent = 'Conectando...'
+                action.disabled = true
             }else{
-                action.textContent = stream.status === 'live'
+                action.textContent = isLive
                     ? 'Assistir'
-                    : 'Aguardando transmissão'
-
-                action.disabled = !authenticated || stream.status !== 'live' || selectedStreamId !== null || pendingStreamId !== null
+                    : 'Indisponivel'
+                action.disabled = !authenticated || !isLive || selectedStreamId !== null || pendingStreamId !== null
                 action.addEventListener('click', () => {
                     watchStream(stream.id)
                 })
             }
-            
-            card.append(title, state, action)
+
+            footer.append(description, action)
+            card.append(header, footer)
             streamList.appendChild(card)
         }
     }
@@ -237,6 +369,8 @@ export function montarPlayerWebRTC(container, clientId){
             return
         }
 
+        setPlayerState('connecting')
+
         statusRTC.textContent = 'Solicitando transmissão...'
 
         log(`Solicitada transmissão ${streamId.slice(0, 8)}.`)
@@ -253,6 +387,7 @@ export function montarPlayerWebRTC(container, clientId){
         activeNegotiationId = null
 
         closePeer()
+        setPlayerState('leaving')
         renderStreamList()
 
         statusRTC.textContent = 'Saindo da transmissão...'
@@ -378,7 +513,7 @@ export function montarPlayerWebRTC(container, clientId){
                 `Todos os codecs foram testados sem reprodução. ` +
                 `Última falha: ${reason}`
             )
-
+            setPlayerState('failed')
             statusRTC.textContent = 'Nenhum codec conseguiu reproduzir o vídeo.'
 
             return
@@ -395,6 +530,7 @@ export function montarPlayerWebRTC(container, clientId){
             `Tentando ${nextCodec.toUpperCase()}...`
         )
 
+        setPlayerState('connecting')
         notifyCodecPreference()
     }
 
@@ -469,6 +605,9 @@ export function montarPlayerWebRTC(container, clientId){
         }else{
             codecInfo.textContent = `Codec manual escolhido: ${codecPreferences.manualCodec.toUpperCase()}`
         }
+        codecSummary.textContent = codecPreferences.automatic
+            ? 'Automático'
+            : `Manual · ${codecPreferences.manualCodec.toUpperCase()}`
     }
 
     function updateButtons() {
@@ -481,6 +620,20 @@ export function montarPlayerWebRTC(container, clientId){
 
         soundButton.textContent = video.muted ? 'Ativar som' : 'Silenciar';
     }
+
+    video.addEventListener('playing', () => {
+        playerPanel.classList.add('is-playing')
+
+        if(connection?.connectionState === 'connected'){
+            setPlayerState('live')
+        }
+    })
+    video.addEventListener('pause', () => {
+        playerPanel.classList.remove('is-playing')
+        if(connection?.connectionState === 'connected'){
+            setPlayerState('connected')
+        }
+    })
 
     function send(message) {
         if (!authenticated ||socket?.readyState !== WebSocket.OPEN) {
@@ -523,6 +676,10 @@ export function montarPlayerWebRTC(container, clientId){
         video.srcObject = null;
         video.muted = true;
 
+        codecCurrent.textContent = 'Codec recebido: aguardando transmissão.'
+
+        playerPanel.classList.remove('is-playing')
+
         updateButtons();
     }
 
@@ -541,7 +698,7 @@ export function montarPlayerWebRTC(container, clientId){
         leavingStream = false
 
         closePeer();
-
+        setPlayerState('idle')
         renderStreamList([])
 
         streamSummary.textContent = 'Conecte-se para consultar a lista.'
@@ -631,6 +788,18 @@ export function montarPlayerWebRTC(container, clientId){
                 )
 
                 if(!videoStats) return
+
+                const codecReport = videoStats.codecId
+                    ? stats.get(videoStats.codecId)
+                    : null
+
+                if(videoStats.framesDecoded > 0 && codecReport?.mimeType){
+                    const codecLabel = `Codec recebido: ${codecReport.mimeType}`
+
+                    if(codecCurrent.textContent !== codecLabel){
+                        codecCurrent.textContent = codecLabel
+                    }
+                }
 
                 if (videoStats.framesDecoded === 0) {
                     const codec = stats.get(videoStats.codecId)
@@ -781,7 +950,10 @@ export function montarPlayerWebRTC(container, clientId){
             log(`ICE: ${state}`)
 
             if(state === 'connected' || state === 'completed') diagnoseICE(pc)
-            if(state === 'failed') statusRTC.textContent = 'Falha ICE. Verifique a configuração TURN.'
+            if(state === 'failed'){
+                statusRTC.textContent = 'Falha ICE. Verifique a configuração TURN.'
+                setPlayerState('failed')
+            }
         }
         pc.onconnectionstatechange = () => {
             if(connection !== pc) return
@@ -790,17 +962,28 @@ export function montarPlayerWebRTC(container, clientId){
 
             log(`Conexão WebRTC: ${state}`)
 
-            if(state === 'connected') {
-                statusRTC.textContent = 'Transmissão WebRTC conectada.'
-                startPerformanceMonitor(pc)
-                startAutoCodecWatch(pc)
-            }
-            if(state === 'disconnected'){
-                statusRTC.textContent = 'Conexão temporariamente interrompida.'
-            }
-            if(state === 'failed'){
-                statusRTC.textContent = 'Falha na conexão WebRTC'
-            }
+            switch (state) {
+                case 'connecting':
+                    setPlayerState('connecting')
+                    break
+
+                case 'connected':
+                    statusRTC.textContent = 'Transmissão WebRTC conectada.'
+                    setPlayerState(video.paused ? 'connected' : 'live')
+                    startPerformanceMonitor(pc)
+                    startAutoCodecWatch(pc)
+                    break
+
+                case 'disconnected':
+                    statusRTC.textContent = 'Conexão temporariamente interrompida.'
+                    setPlayerState('reconnecting')
+                    break
+
+                case 'failed':
+                    statusRTC.textContent = 'Falha na conexão WebRTC.'
+                    setPlayerState('failed')
+                    break
+    }
         }
         pc.onicecandidateerror = event => {
             if(connection !== pc) return
@@ -874,7 +1057,7 @@ export function montarPlayerWebRTC(container, clientId){
                 statusRTC.textContent = 'Autenticado. Aguardando transmissão.'
 
                 log(`Autenticado. Configurações ICE: ` + `${iceServers.length}`)
-
+                setPlayerState('idle')
                 updateButtons()
                 renderStreamList()
                 break
@@ -888,7 +1071,7 @@ export function montarPlayerWebRTC(container, clientId){
                 activeNegotiationId = null
                 pendingStreamId = null
                 leavingStream = false
-
+                setPlayerState('connecting')
                 renderStreamList()
 
                 statusRTC.textContent = 'Aguardando oferta WebRTC.'
@@ -902,6 +1085,7 @@ export function montarPlayerWebRTC(container, clientId){
                 activeNegotiationId = null
 
                 closePeer()
+                setPlayerState('idle')
                 renderStreamList()
 
                 statusRTC.textContent = 'Escolha uma transmissão para assistir.'
@@ -913,6 +1097,7 @@ export function montarPlayerWebRTC(container, clientId){
                 if(message.streamId !== selectedStreamId || typeof message.negotiationId !== 'string') break
                 activeNegotiationId = message.negotiationId
                 log(`Oferta SDP recebida: ` +  `${activeNegotiationId.slice(0, 8)}.`)
+                setPlayerState('connecting')
                 await receiveOffer(message.sdp, message.negotiationId, message.streamId)
                 break
             case 'webrtc:ice':
@@ -940,7 +1125,7 @@ export function montarPlayerWebRTC(container, clientId){
                 closePeer()
 
                 statusRTC.textContent = 'Transmissão encerrada.'
-
+                setPlayerState('ended')
                 log('O transmissor encerrou a sessão.')
                 break
             case 'error':
