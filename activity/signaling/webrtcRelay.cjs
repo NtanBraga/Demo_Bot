@@ -343,7 +343,7 @@ wss.on('connection', ws => {
 
                 if(publishers.size === 1){
                     for(const viewer of viewers.values()){
-                        if(!viewer.watchingStreamId){
+                        if(!viewer.watchingStreamId && viewer.autoWatch){
                             watchStream(viewer, streamId)
                         }
                     }
@@ -372,6 +372,7 @@ wss.on('connection', ws => {
                 ws.role = 'viewer'
                 ws.viewerId = crypto.randomUUID()
                 ws.watchingStreamId = null
+                ws.autoWatch = msg.autoWatch !== false
 
                 viewers.set(ws.viewerId, ws)
                 clearTimeout(authTimeout)
@@ -387,7 +388,7 @@ wss.on('connection', ws => {
                     streams: getStreamList()
                 })
 
-                if(publishers.size === 1){
+                if(publishers.size === 1 && ws.autoWatch){
                     const streamId = publishers.keys().next().value
 
                     watchStream(ws, streamId)

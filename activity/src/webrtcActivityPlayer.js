@@ -22,7 +22,7 @@ export function montarPlayerWebRTC(container, clientId){
         >
 
         <button id="rtc-connect">
-            Assistir via WebRTC
+            Conectar ao catalogo
         </button>
 
         <button id="rtc-disconnect" disabled>
@@ -109,6 +109,14 @@ export function montarPlayerWebRTC(container, clientId){
     let socket = null;
     let authenticated = false;
 
+    let cachedViewerToken = null
+    let authenticatingViewerToken = null
+
+    let selectedStreamId = null
+    let pendingStreamId = null
+    let leavingStream = false
+    let latestStreams = []
+
     let connection = null;
     let remoteStream = null;
 
@@ -134,7 +142,12 @@ export function montarPlayerWebRTC(container, clientId){
     }
 
     function renderStreamList(items){
-        const streams = (Array.isArray(items) ? items : [])
+
+        if(Array.isArray(items)){
+            latestStreams = items
+        }
+
+        const streams = latestStreams
             .filter(stream => stream && 
                 typeof stream.id === 'string' && 
                 (stream.status === 'idle' || stream.status === 'live'))
@@ -175,9 +188,74 @@ export function montarPlayerWebRTC(container, clientId){
                 ? '● Ao vivo'
                 : '○ Aguardando captura'
 
-            card.append(title, state)
+
+            const action = document.createElement('button')
+            const isWatching = selectedStreamId === stream.id
+
+            action.style.marginTop = '8px'
+
+            if(isWatching){
+                action.textContent = leavingStream ? 'Saindo...' : 'Sair'
+                action.disabled = leavingStream
+
+                action.addEventListener('click', leaveStream)
+            }else{
+                action.textContent = stream.status === 'live'
+                    ? 'Assistir'
+                    : 'Aguardando transmissão'
+
+                action.disabled = !authenticated || stream.status !== 'live' || selectedStreamId !== null || pendingStreamId !== null
+                action.addEventListener('click', () => {
+                    watchStream(stream.id)
+                })
+            }
+            
+            card.append(title, state, action)
             streamList.appendChild(card)
         }
+    }
+
+    function watchStream(streamId){
+        if(!authenticated || selectedStreamId || pendingStreamId) return
+
+        const available = latestStreams.some(stream => stream.id === streamId && stream.status === 'live')
+
+        if(!available) return
+
+        resetAutoCodecOrder()
+        notifyCodecPreference()
+        pendingStreamId = streamId
+        renderStreamList()
+
+        if(!send({
+            type: 'viewer:watch',
+            streamId
+        })){
+            pendingStreamId = null
+            renderStreamList()
+            return
+        }
+
+        statusRTC.textContent = 'Solicitando transmissão...'
+
+        log(`Solicitada transmissão ${streamId.slice(0, 8)}.`)
+    }
+
+    function leaveStream(){
+        if(!authenticated || !selectedStreamId || leavingStream) return
+
+        if(!send({
+            type: 'viewer:leave'
+        })) return
+
+        leavingStream = true
+
+        closePeer()
+        renderStreamList()
+
+        statusRTC.textContent = 'Saindo da transmissão...'
+
+        log(`Saindo da transmissão ${selectedStreamId.slice(0, 8)}.`)
     }
 
     function loadCodecPreferences(){
@@ -449,9 +527,15 @@ export function montarPlayerWebRTC(container, clientId){
     function disconnect() {
         const oldSocket = socket;
 
+        authenticatingViewerToken = null
+
         socket = null;
         authenticated = false;
         iceServers = [];
+
+        selectedStreamId = null
+        pendingStreamId = null
+        leavingStream = false
 
         closePeer();
 
@@ -763,6 +847,9 @@ export function montarPlayerWebRTC(container, clientId){
             case 'viewer:ready':
                 authenticated = true
 
+                cachedViewerToken = authenticatingViewerToken
+                authenticatingViewerToken = null
+
                 iceServers = Array.isArray(message.iceServers) ? message.iceServers : []
 
                 statusRTC.textContent = 'Autenticado. Aguardando transmissão.'
@@ -770,10 +857,37 @@ export function montarPlayerWebRTC(container, clientId){
                 log(`Autenticado. Configurações ICE: ` + `${iceServers.length}`)
 
                 updateButtons()
+                renderStreamList()
                 break
             case 'streams:snapshot':
                 renderStreamList(message.streams)
                 break
+            case 'viewer:watching': 
+                if(typeof message.streamId !== 'string') break
+
+                selectedStreamId = message.streamId
+                pendingStreamId = null
+                leavingStream = false
+
+                renderStreamList()
+
+                statusRTC.textContent = 'Aguardando oferta WebRTC.'
+
+                log(`Assistindo à transmissão ${selectedStreamId.slice(0, 8)}.`)
+                break
+            case 'viewer:unwatched':
+                selectedStreamId = null
+                pendingStreamId = null
+                leavingStream = false
+
+                closePeer()
+                renderStreamList()
+
+                statusRTC.textContent = 'Escolha uma transmissão para assistir.'
+
+                log('Você saiu da transmissão.')
+                break
+
             case 'webrtc:offer':
                 log('Oferta SDP recebida.')
                 await receiveOffer(message.sdp)
@@ -794,9 +908,19 @@ export function montarPlayerWebRTC(container, clientId){
                 log('O transmissor encerrou a sessão.')
                 break
             case 'error':
+
+                if(!authenticated){
+                    cachedViewerToken = null
+                    authenticatingViewerToken = null
+                }
+
                 statusRTC.textContent = 'Erro de sinalização.'
 
                 log(`Servidor: ${message.message || 'Erro desconhecido'}`)
+
+                pendingStreamId = null
+                leavingStream = false
+                renderStreamList()
 
                 break
             default: 
@@ -809,12 +933,14 @@ export function montarPlayerWebRTC(container, clientId){
 
         resetAutoCodecOrder()
 
-        let token = keyInput.value.trim()
+        let token = keyInput.value.trim() || cachedViewerToken
 
         if(!token){
             statusRTC.textContent = 'Informe a chave de visualização.'
             return
         }
+
+        authenticatingViewerToken = token
 
         const url = `wss://${clientId}.discordsays.com/.proxy/ws-webrtc`
 
@@ -832,6 +958,7 @@ export function montarPlayerWebRTC(container, clientId){
             ws.send(JSON.stringify({
                 type: 'viewer:join',
                 token,
+                autoWatch: false,
                 ...getCodecRequest()
             }))
 
