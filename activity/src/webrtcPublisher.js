@@ -16,6 +16,10 @@ let iceServers = [];
 const viewers = new Set();
 const peers = new Map();
 
+const viewerCodecPreferences = new Map()
+
+const VALID_VIDEO_CODECS = ['h264', 'av1', 'vp8']
+
 function log(message) {
     const line = `[${new Date().toLocaleTimeString()}] ${message}`;
 
@@ -28,6 +32,13 @@ function log(message) {
     }
 
     logBox.scrollTop = logBox.scrollHeight;
+}
+
+function normalizeCodecPreference(codecMode, codec){
+    return {
+        codecMode: codecMode === 'manual' ? 'manual' : 'auto',
+        codec: VALID_VIDEO_CODECS.includes(codec) ? codec : 'h264'
+    }
 }
 
 function updateButtons(){
@@ -260,13 +271,16 @@ async function openPeer(viewerId){
         }
 
         if(videoSender){
+            const preference = viewerCodecPreferences.get(viewerId) ?? {
+                codecMode: 'auto',
+                codec: 'h264'
+            }
+
             const transceiver = pc.getTransceivers().find(t => t.sender === videoSender)
 
-            const codecPriority = [
-                'video/h264',
-                'video/av1',
-                'video/vp8'
-            ]
+            const requestedType = `video/${preference.codec}`
+
+            const codecPriority = [requestedType]
 
             const sendCodecs = RTCRtpSender.getCapabilities('video')?.codecs ?? []
             const receiveCodecs = RTCRtpReceiver.getCapabilities('video')?.codecs ?? []
@@ -370,12 +384,48 @@ async function handleMessage(message){
 
             updateButtons()
             break
+        case 'webrtc:codec-request': {
+            const viewerId = message.from
+
+            if(!viewerId || !viewers.has(viewerId)) break
+
+            const nextPreference = normalizeCodecPreference(message.codecMode, message.codec)
+            const previous = viewerCodecPreferences.get(viewerId)
+
+            if(previous?.codecMode === nextPreference.codecMode &&  previous?.codec === nextPreference.codec) break
+
+            viewerCodecPreferences.set(viewerId, nextPreference)
+
+            log(
+                `Alterando codec de ${viewerId.slice(0, 8)} para ` +
+                `${nextPreference.codec.toUpperCase()} ` +
+                `(${nextPreference.codecMode})`
+            )
+
+            closePeer(viewerId)
+
+            await openPeer(viewerId)
+
+            break
+        }
         case 'viewer:joined':
             if(typeof message.viewerId !== 'string') return
 
             viewers.add(message.viewerId)
 
+            viewerCodecPreferences.set(
+                message.viewerId,
+                normalizeCodecPreference(message.codecMode, message.codec)
+            )
+
             log(`Espectador entrou: ` + `${message.viewerId.slice(0, 8)}.`)
+
+            log(
+                `Preferência inicial: ` +
+                `${message.codec?.toUpperCase() ?? 'H264'} ` +
+                `(${message.codecMode ?? 'auto'})`
+            )
+
 
             await openPeer(message.viewerId)
             break
@@ -383,6 +433,7 @@ async function handleMessage(message){
             if(typeof message.viewerId !== 'string') return
 
             viewers.delete(message.viewerId)
+            viewerCodecPreferences.delete(message.viewerId)
 
             closePeer(message.viewerId)
 
@@ -489,6 +540,7 @@ function connect(){
         iceServers = []
 
         viewers.clear()
+        viewerCodecPreferences.clear()
 
         stopCapture()
 

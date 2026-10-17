@@ -121,6 +121,18 @@ function validCandidate(candidate){
     )
 }
 
+const VALID_CODECS = new Set(['h264','av1','vp8'])
+
+function readCodecPreference(message){
+    const codecMode = message.codecMode ?? 'auto'
+    const codec = message.codec ?? 'h264'
+
+    if(!['auto', 'manual'].includes(codecMode)) return null
+    if(!VALID_CODECS.has(codec)) return null
+
+    return { codecMode, codec }
+}
+
 const server = http.createServer((req, res) => {
     if(req.method === 'GET' && req.url === '/health'){
         res.writeHead(200, {
@@ -230,6 +242,14 @@ wss.on('connection', ws => {
                     return reject(ws, 'Limite de espectadores atingido')
                 }
 
+                const preferences = readCodecPreference(msg)
+                if(!preferences) {
+                    return reject(ws, 'Preferencia de codec invalida.')
+                }
+
+                ws.codecMode = preferences.codecMode
+                ws.codec = preferences.codec
+
                 ws.role = 'viewer'
                 ws.viewerId = crypto.randomUUID()
 
@@ -244,7 +264,9 @@ wss.on('connection', ws => {
 
                 send(publisher, {
                     type: 'viewer:joined',
-                    viewerId: ws.viewerId
+                    viewerId: ws.viewerId,
+                    codecMode: ws.codecMode,
+                    codec: ws.codec
                 })
                 return
             }
@@ -282,6 +304,32 @@ wss.on('connection', ws => {
             return reject(ws)
         }
         if(ws.role === 'viewer' && publisher){
+
+            if(msg.type === 'webrtc:codec-request'){
+                const preference = readCodecPreference(msg)
+
+                if(!preference){
+                    return reject(ws, 'Preferencia de codec invalida.')
+                }
+
+                ws.codecMode = preference.codecMode
+                ws.codec = preference.codec
+
+                send(publisher, {
+                    type: 'webrtc:codec-request',
+                    from: ws.viewerId,
+                    codecMode: ws.codecMode,
+                    codec: ws.codec
+                })
+
+                console.log(
+                    `[WebRTC] Espectador ${ws.viewerId.slice(0, 8)} ` +
+                    `solicitou ${ws.codec} (${ws.codecMode})`
+                )
+
+                return
+            }
+
             if(msg.type === 'webrtc:answer' && validSdp(msg.sdp, 'answer')){
                 send(publisher, {
                     type: 'webrtc:answer',

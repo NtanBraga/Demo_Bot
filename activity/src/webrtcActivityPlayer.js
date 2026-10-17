@@ -48,8 +48,27 @@ export function montarPlayerWebRTC(container, clientId){
             "
         ></video>
 
+        <div id="rtc-codec-settings" style="margin-top: 16px;">
+            <h4>Configurações de video</h4>
+            <label style="display: block; margin-bottom: 10px;">
+                <input type="checkbox" id="rtc-codec-auto">
+                Seleção automatica de codec
+            </label>
+            <label for="rtc-codec-select">
+                Codec de video:
+            </label>
+            <select id="rtc-codec-select">
+                <option value="h264">H.264</option>
+                <option value="av1">AV1</option>
+                <option value="vp8">VP8</option>
+            </select>
+            <p id="rtc-codec-info" style="font-size: 13px;">Carregando preferências</p>
+        </div>
+            
+
         <pre id="rtc-logs" style="white-space:pre-wrap;max-height:200px;overflow:auto;"></pre>
         `
+
 
     container.appendChild(section);
 
@@ -62,6 +81,21 @@ export function montarPlayerWebRTC(container, clientId){
 
     const video = section.querySelector('#rtc-video');
     const logs = section.querySelector('#rtc-logs');
+
+    const codecAuto = section.querySelector('#rtc-codec-auto');
+    const codecSelect = section.querySelector('#rtc-codec-select');
+    const codecInfo = section.querySelector('#rtc-codec-info');
+
+    const CODEC_STORAGE_KEY = 'demo_live:codec-preferences:v1'
+
+    const SUPPORTED_CODECS = ['h264', 'av1', 'vp8']
+
+    const DEFAULT_CODEC_PREFERENCES = {
+        automatic: true,
+        manualCodec: 'h264',
+        lastWorkingCodec: null
+    }
+
 
     let socket = null;
     let authenticated = false;
@@ -90,6 +124,217 @@ export function montarPlayerWebRTC(container, clientId){
         logs.scrollTop = logs.scrollHeight;
     }
 
+    function loadCodecPreferences(){
+        try{
+            const saved = localStorage.getItem(CODEC_STORAGE_KEY)
+
+            if(!saved){
+                return {...DEFAULT_CODEC_PREFERENCES}
+            }
+
+            const parsed = JSON.parse(saved)
+
+            return{
+                automatic: typeof parsed.automatic === 'boolean'
+                    ? parsed.automatic
+                    : true,
+                manualCodec: SUPPORTED_CODECS.includes(parsed.manualCodec)
+                    ? parsed.manualCodec
+                    : 'h264',
+                lastWorkingCodec: SUPPORTED_CODECS.includes(parsed.lastWorkingCodec)
+                    ? parsed.lastWorkingCodec
+                    : null
+            }
+        }catch(e){
+            console.warn('[Demo Live] Cache indisponivel: ', e)
+            return {...DEFAULT_CODEC_PREFERENCES}
+        }
+    }
+
+    let codecPreferences = loadCodecPreferences()
+
+    let autoCodecOrder = []
+    let autoCodecIndex = 0
+
+    function resetAutoCodecOrder(){
+        const first = codecPreferences.lastWorkingCodec ?? 'h264'
+
+        autoCodecOrder = [
+            first,
+            ...SUPPORTED_CODECS.filter(codec => codec !== first)
+        ]
+
+        autoCodecIndex = 0
+    }
+
+    resetAutoCodecOrder()
+
+    function saveCodecPreferences(){
+        try{
+            localStorage.setItem(CODEC_STORAGE_KEY, JSON.stringify(codecPreferences))
+
+            return true
+        }catch(e){
+            console.warn('[Demo Live] Falha ao salvar preferencias: ', e)
+            return false
+        }
+    }
+
+    function getRequestedCodec(){
+        if(!codecPreferences.automatic){
+            return codecPreferences.manualCodec
+        }
+
+        return autoCodecOrder[autoCodecIndex] ?? 'h264'
+    }
+
+    function getCodecRequest(){
+        return {
+            codecMode: codecPreferences.automatic ? 'auto' : 'manual',
+            codec: getRequestedCodec()
+        }
+    }
+
+    function notifyCodecPreference(){
+        if(!authenticated) return
+
+        const request = getCodecRequest()
+
+        if(send({
+            type: 'webrtc:codec-request',
+            ...request
+        })){
+            log(
+                `Preferência enviada: ${request.codec.toUpperCase()} ` +
+                `(${request.codecMode})`
+            )
+        }
+    }
+
+    const AUTO_CODEC_TIMEOUT_MS = 8_000
+
+    let autoCodecTimeout = null
+    let videoFrameCallbackId = null
+    let videoLoadedListener = null
+
+    function stopAutoCodecWatch(){
+        if(autoCodecTimeout !== null){
+            clearTimeout(autoCodecTimeout)
+            autoCodecTimeout = null
+        }
+        if(videoFrameCallbackId !== null && typeof video.cancelVideoFrameCallback === 'function'){
+            video.cancelVideoFrameCallback(videoFrameCallbackId)
+        }
+
+        videoFrameCallbackId = null
+
+        if(videoLoadedListener){
+            video.removeEventListener('loadeddata', videoLoadedListener)
+            videoLoadedListener = null
+        }
+    }
+
+    function tryNextAutomaticCodec(reason){
+        if(!codecPreferences.automatic) return
+
+        if(autoCodecIndex >= autoCodecOrder.length - 1){
+            log(
+                `Todos os codecs foram testados sem reprodução. ` +
+                `Última falha: ${reason}`
+            )
+
+            statusRTC.textContent = 'Nenhum codec conseguiu reproduzir o vídeo.'
+
+            return
+        }
+
+        const previousCodec = getRequestedCodec()
+
+        autoCodecIndex++
+
+        const nextCodec = getRequestedCodec()
+
+        log(
+            `${previousCodec.toUpperCase()} falhou: ${reason}. ` +
+            `Tentando ${nextCodec.toUpperCase()}...`
+        )
+
+        notifyCodecPreference()
+    }
+
+    function startAutoCodecWatch(pc){
+        stopAutoCodecWatch()
+
+        if(!codecPreferences.automatic || connection !== pc) return
+
+        const attemptedCodec = getRequestedCodec()
+        let confirmed = false
+
+        function confirmPlayback(){
+            if(confirmed || connection !== pc || !codecPreferences.automatic || getRequestedCodec() !== attemptedCodec) return
+
+            confirmed = true
+
+            stopAutoCodecWatch()
+
+            codecPreferences.lastWorkingCodec = attemptedCodec
+
+            saveCodecPreferences()
+            updateCodecControls()
+
+            log(
+                `Reprodução confirmada com ${attemptedCodec.toUpperCase()}. ` +
+                `Codec salvo no cache.`
+            )
+        }
+
+        autoCodecTimeout = setTimeout(() => {
+            if(confirmed || connection !== pc || !codecPreferences.automatic) return
+
+            stopAutoCodecWatch()
+
+            tryNextAutomaticCodec(`nenhum quadro apresentado em ${AUTO_CODEC_TIMEOUT_MS / 1000}s`)
+        }, AUTO_CODEC_TIMEOUT_MS)
+
+        if(typeof video.requestVideoFrameCallback === 'function'){
+            videoFrameCallbackId = video.requestVideoFrameCallback(() => {
+                videoFrameCallbackId = null
+                confirmPlayback()
+            })
+        }else{
+            videoLoadedListener = () => {
+                if(video.readyState >= 2 && video.videoWidth > 0){
+                    confirmPlayback()
+                }
+            }
+            video.addEventListener('loadeddata', videoLoadedListener)
+            videoLoadedListener()
+        }
+
+        log(
+            `Verificando reprodução com ${attemptedCodec.toUpperCase()} ` +
+            `(${AUTO_CODEC_TIMEOUT_MS / 1000}s).`
+        )
+    }
+
+
+    function updateCodecControls(){
+        codecAuto.checked = codecPreferences.automatic
+
+        codecSelect.disabled = codecPreferences.automatic
+        codecSelect.value = codecPreferences.manualCodec
+
+        if(codecPreferences.automatic){
+            const last = codecPreferences.lastWorkingCodec
+
+            codecInfo.textContent = last
+                ? `Automático ativado. Ultimo codec funcional: ${last.toUpperCase()}.`
+                : 'Automático ativado. Nenhum codec funcional salvo.'
+        }else{
+            codecInfo.textContent = `Codec manual escolhido: ${codecPreferences.manualCodec.toUpperCase()}`
+        }
+    }
+
     function updateButtons() {
         connectButton.disabled = socket !== null;
         disconnectButton.disabled = socket === null;
@@ -111,6 +356,8 @@ export function montarPlayerWebRTC(container, clientId){
     }
 
     function closePeer(){
+        stopAutoCodecWatch()
+
         const oldConnection = connection
 
         stopPerformanceMonitor()
@@ -237,6 +484,23 @@ export function montarPlayerWebRTC(container, clientId){
                 )
 
                 if(!videoStats) return
+
+                if (videoStats.framesDecoded === 0) {
+                    const codec = stats.get(videoStats.codecId)
+
+                    log(
+                        `DIAGNOSTICO VIDEO: ` +
+                        `Codec=${codec?.mimeType ?? 'n/d'}, ` +
+                        `Decoder=${videoStats.decoderImplementation ?? 'n/d'}, ` +
+                        `Frames recebidos=${videoStats.framesReceived ?? 'n/d'}, ` +
+                        `Frames decodificados=${videoStats.framesDecoded ?? 'n/d'}, ` +
+                        `Keyframes decodificados=${videoStats.keyFramesDecoded ?? 'n/d'}, ` +
+                        `PLI=${videoStats.pliCount ?? 'n/d'}, ` +
+                        `NACK=${videoStats.nackCount ?? 'n/d'}, ` +
+                        `Video readyState=${video.readyState}`
+                    )
+                }
+
 
                 const quality = video.getVideoPlaybackQuality?.()
 
@@ -374,6 +638,7 @@ export function montarPlayerWebRTC(container, clientId){
             if(state === 'connected') {
                 statusRTC.textContent = 'Transmissão WebRTC conectada.'
                 startPerformanceMonitor(pc)
+                startAutoCodecWatch(pc)
             }
             if(state === 'disconnected'){
                 statusRTC.textContent = 'Conexão temporariamente interrompida.'
@@ -423,6 +688,10 @@ export function montarPlayerWebRTC(container, clientId){
 
             if(connection === pc){
                 closePeer()
+
+                if(codecPreferences.automatic){
+                    tryNextAutomaticCodec(`negociação SDP falhou: ${error.message}`)
+                }
             }
         }
     }
@@ -475,6 +744,8 @@ export function montarPlayerWebRTC(container, clientId){
     function connect(){
         if(socket) return
 
+        resetAutoCodecOrder()
+
         let token = keyInput.value.trim()
 
         if(!token){
@@ -497,7 +768,8 @@ export function montarPlayerWebRTC(container, clientId){
 
             ws.send(JSON.stringify({
                 type: 'viewer:join',
-                token
+                token,
+                ...getCodecRequest()
             }))
 
             token = ''
@@ -548,12 +820,40 @@ export function montarPlayerWebRTC(container, clientId){
         updateButtons()
     })
 
+    codecAuto.addEventListener('change', () => {
+        codecPreferences.automatic = codecAuto.checked
+
+        stopAutoCodecWatch()
+        resetAutoCodecOrder()
+        saveCodecPreferences()
+        updateCodecControls()
+        notifyCodecPreference()
+
+        log(`Seleção automática de codec:` + `${codecPreferences.automatic ? 'ativada' : 'desativada'}`)
+    })
+
+    codecSelect.addEventListener('change', () => {
+        const selectedCodec = codecSelect.value
+
+        if(!SUPPORTED_CODECS.includes(selectedCodec)) return
+
+        codecPreferences.manualCodec = selectedCodec
+
+        stopAutoCodecWatch()
+        saveCodecPreferences()
+        updateCodecControls()
+        notifyCodecPreference()
+
+        log(`Codec manual selecionado: ${selectedCodec.toUpperCase()}`)
+    })
+
     connectButton.addEventListener('click', connect)
     disconnectButton.addEventListener('click', disconnect)
 
     window.addEventListener('pagehide', disconnect, { once: true })
 
     updateButtons()
+    updateCodecControls()
 
     return {disconnect}
 }
