@@ -69,6 +69,7 @@ function stopWatching(viewer, notify = true){
     const previousId = viewer.watchingStreamId
 
     viewer.watchingStreamId = null
+    viewer.negotiationId = null
 
     if(previousId){
         const previousStream = streams.get(previousId)
@@ -78,11 +79,6 @@ function stopWatching(viewer, notify = true){
             viewerId: viewer.viewerId
         })
 
-        if(notify){
-            send(viewer, {
-                type: 'stream:ended'
-            })
-        }
     }
     if(notify){
         send(viewer, {
@@ -114,6 +110,7 @@ function watchStream(viewer, streamId){
     }
 
     viewer.watchingStreamId = streamId
+    viewer.negotiationId = null
 
     send(viewer, {
         type: 'viewer:watching',
@@ -194,6 +191,11 @@ function validSdp(sdp, type){
     )
 }
 
+function validNegotiationId(id){
+    return typeof id === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+}
+
 function validCandidate(candidate){
     return candidate === null || (
         candidate &&
@@ -270,6 +272,7 @@ wss.on('connection', ws => {
     ws.alive = true
     ws.streamId = null
     ws.watchingStreamId = null
+    ws.negotiationId = null
 
     ws.on('pong', () => {
         ws.alive = true
@@ -439,8 +442,12 @@ wss.on('connection', ws => {
                     if(viewer.watchingStreamId !== ws.streamId){
                         continue
                     }
+
+                    viewer.negotiationId = null
+
                     send(viewer, {
-                        type: 'stream:ended'
+                        type: 'stream:ended',
+                        streamId: ws.streamId
                     })
                 }
                 return
@@ -451,28 +458,34 @@ wss.on('connection', ws => {
             const validTarget = target?.watchingStreamId === ws.streamId
 
             if(msg.type === 'webrtc:offer'){
-                if(!validSdp(msg.sdp, 'offer')){
+                if(!validSdp(msg.sdp, 'offer') || !validNegotiationId(msg.negotiationId)){
                     return reject(ws)
                 }
 
                 if(!validTarget) return
 
+                target.negotiationId = msg.negotiationId
+
                 send(target, {
                     type: 'webrtc:offer',
+                    streamId: ws.streamId,
+                    negotiationId: msg.negotiationId,
                     sdp: msg.sdp
                 })
                 return
             }
             if(msg.type === 'webrtc:ice'){
 
-                if(!validCandidate(msg.candidate)){
+                if(!validCandidate(msg.candidate) || !validNegotiationId(msg.negotiationId)){
                     return reject(ws)
                 }
 
-                if(!validTarget) return
+                if(!validTarget || target.negotiationId !== msg.negotiationId) return
 
                 send(target, {
                     type: 'webrtc:ice',
+                    streamId: ws.streamId,
+                    negotiationId: msg.negotiationId,
                     candidate: msg.candidate
                 })
                 return
@@ -524,20 +537,40 @@ wss.on('connection', ws => {
                 return
             }
 
-            if(!selectedPublisher) return
+            const currentNegotiation =
+                selectedPublisher &&
+                msg.streamId === ws.watchingStreamId &&
+                validNegotiationId(msg.negotiationId) &&
+                ws.negotiationId === msg.negotiationId
 
-            if(msg.type === 'webrtc:answer' && validSdp(msg.sdp, 'answer')){
+            if(msg.type === 'webrtc:answer'){
+
+                if(!validSdp(msg.sdp, 'answer')){
+                    return reject(ws)
+                }
+
+                if(!currentNegotiation) return
+
                 send(selectedPublisher, {
                     type: 'webrtc:answer',
                     from: ws.viewerId,
+                    negotiationId: msg.negotiationId,
                     sdp: msg.sdp
                 })
                 return
             }
-            if(msg.type === 'webrtc:ice' && validCandidate(msg.candidate)){
+            if(msg.type === 'webrtc:ice'){
+
+                if(!validCandidate(msg.candidate)){
+                    return reject(ws)
+                }
+
+                if(!currentNegotiation) return
+
                 send(selectedPublisher, {
                     type: 'webrtc:ice',
                     from: ws.viewerId,
+                    negotiationId: msg.negotiationId,
                     candidate: msg.candidate
                 })
                 return
@@ -563,9 +596,11 @@ wss.on('connection', ws => {
                 if(viewer.watchingStreamId !== ws.streamId) continue
 
                 viewer.watchingStreamId = null
+                viewer.negotiationId = null
 
                 send(viewer, {
-                    type: 'stream:ended'
+                    type: 'stream:ended',
+                    streamId: ws.streamId
                 })
 
                 send(viewer, {

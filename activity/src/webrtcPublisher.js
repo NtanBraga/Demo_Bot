@@ -222,6 +222,7 @@ async function openPeer(viewerId){
 
     const entry = {
         pc,
+        negotiationId: crypto.randomUUID(),
         remoteReady: false,
         draining: false,
         pendingCandidates: [],
@@ -233,9 +234,12 @@ async function openPeer(viewerId){
     peers.set(viewerId, entry)
 
     pc.onicecandidate = event => {
+        if(peers.get(viewerId) !== entry) return
+
         const message = {
             type: 'webrtc:ice',
             to: viewerId,
+            negotiationId: entry.negotiationId,
             candidate: event.candidate ? event.candidate.toJSON() : null
         }
 
@@ -354,6 +358,7 @@ async function openPeer(viewerId){
         if(!send({
             type: 'webrtc:offer',
             to: viewerId,
+            negotiationId: entry.negotiationId,
             sdp: pc.localDescription.toJSON()
         })){
             closePeer(viewerId)
@@ -371,7 +376,9 @@ async function openPeer(viewerId){
         log(`Oferta enviada para ${viewerId.slice(0,8)}.`)
     }catch(e){
         log(`Erro ao negociar com ${viewerId.slice(0,8)}: ` + e.message)
-        closePeer(viewerId)
+        if(peers.get(viewerId) === entry){
+            closePeer(viewerId)
+        }
     }
 }
 
@@ -470,26 +477,35 @@ async function handleMessage(message){
         case 'webrtc:answer': {
             const entry = peers.get(message.from)
 
-            if(!entry || entry.pc.signalingState !== 'have-local-offer') return
+            if(!entry ||
+                entry.negotiationId !== message.negotiationId ||
+                entry.pc.signalingState !== 'have-local-offer') return
 
             try{
                 await entry.pc.setRemoteDescription(message.sdp)
+
+                if(peers.get(message.from) !== entry) break
 
                 entry.remoteReady = true
 
                 await drainCandidates(entry)
 
-                log(`Resposta SDP recebida de ` + `${message.from.slice(0, 8)}.`)
+                if(peers.get(message.from) === entry){
+                    log(`Resposta SDP recebida de ` + `${message.from.slice(0, 8)}.`)
+                }
             }catch(e){
                 log(`Erro ao receber SDP: ${e.message}`)
-                closePeer(message.from)
+                
+                if(peers.get(message.from) === entry){
+                    closePeer(message.from)
+                }
             }
             break
         }
         case 'webrtc:ice': {
             const entry = peers.get(message.from)
 
-            if(!entry) return
+            if(!entry || entry.negotiationId !== message.negotiationId) return
 
             entry.pendingCandidates.push(message.candidate ?? null)
 

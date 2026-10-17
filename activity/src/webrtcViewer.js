@@ -10,6 +10,9 @@ let socket = null;
 let authenticated = false;
 let iceServers = [];
 
+let selectedStreamId = null
+let activeNegotiationId = null
+
 let pc = null;
 let remoteStream = null;
 
@@ -89,6 +92,9 @@ function disconnect(){
     authenticated = false
     iceServers = []
 
+    selectedStreamId = null
+    activeNegotiationId = null
+
     closePeer()
 
     if(oldSocket && oldSocket.readyState !== WebSocket.CLOSED){
@@ -147,8 +153,14 @@ async function diagnoseConnection(connection){
     }
 }
 
-async function receiveOffer(description){
-    if(!authenticated) return
+async function receiveOffer(description, negotiationId, streamId){
+    if(!authenticated ||
+        selectedStreamId !== streamId ||
+        activeNegotiationId !== negotiationId
+    ) return
+
+
+
     if(!description || description.type !== 'offer' || typeof description.sdp !== 'string'){
         log('Oferta SDP invalida.')
         return
@@ -193,10 +205,12 @@ async function receiveOffer(description){
         })
     }
     connection.onicecandidate = event => {
-        if(pc !== connection) return
+        if(pc !== connection || activeNegotiationId !== negotiationId) return
 
         const message = {
             type: 'webrtc:ice',
+            streamId,
+            negotiationId,
             candidate: event.candidate ? event.candidate.toJSON() : null
         }
 
@@ -247,7 +261,7 @@ async function receiveOffer(description){
     try{
         await connection.setRemoteDescription(description)
 
-        if(pc !== connection) return
+        if(pc !== connection || activeNegotiationId !== negotiationId) return
 
         remoteReady = true
 
@@ -255,10 +269,12 @@ async function receiveOffer(description){
 
         await connection.setLocalDescription(answer)
 
-        if(pc !== connection) return
+        if(pc !== connection || activeNegotiationId !== negotiationId) return
 
         if(!send({
             type: 'webrtc:answer',
+            streamId,
+            negotiationId,
             sdp: connection.localDescription.toJSON()
         })){
             throw new Error('Não foi possivel enviar a resposta SDP.')    
@@ -296,11 +312,27 @@ async function handleMessage(message){
 
             updateButtons()
             break
+        case 'viewer:watching':
+            selectedStreamId = message.streamId
+            activeNegotiationId = null
+            break
+        case 'viewer:unwatched':
+            selectedStreamId = null
+            activeNegotiationId = null
+            closePeer()
+            break
         case "webrtc:offer":
+            if(message.streamId !== selectedStreamId || typeof message.negotiationId !== 'string') break
+
+            activeNegotiationId = message.negotiationId
+
             log('Oferta SDP recebida.')
-            await receiveOffer(message.sdp)
+            await receiveOffer(message.sdp, message.negotiationId, message.streamId)
             break
         case 'webrtc:ice':
+
+            if(message.streamId !== selectedStreamId || !activeNegotiationId || message.negotiationId !== activeNegotiationId) break
+
             pendingRemoteCandidates.push(message.candidate ?? null)
 
             if(pc){
@@ -308,6 +340,10 @@ async function handleMessage(message){
             }
             break
         case 'stream:ended':
+            if(message.streamId && message.streamId !== selectedStreamId) break
+
+            activeNegotiationId = null
+
             log('O transmissor encerrou a sessão')
             closePeer()
             statusRTC.textContent = 'Transmissão encerrada.'

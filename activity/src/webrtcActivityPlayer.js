@@ -113,6 +113,7 @@ export function montarPlayerWebRTC(container, clientId){
     let authenticatingViewerToken = null
 
     let selectedStreamId = null
+    let activeNegotiationId = null
     let pendingStreamId = null
     let leavingStream = false
     let latestStreams = []
@@ -249,6 +250,7 @@ export function montarPlayerWebRTC(container, clientId){
         })) return
 
         leavingStream = true
+        activeNegotiationId = null
 
         closePeer()
         renderStreamList()
@@ -534,6 +536,7 @@ export function montarPlayerWebRTC(container, clientId){
         iceServers = [];
 
         selectedStreamId = null
+        activeNegotiationId = null
         pendingStreamId = null
         leavingStream = false
 
@@ -681,8 +684,11 @@ export function montarPlayerWebRTC(container, clientId){
         }, 3000)
     }
 
-    async function receiveOffer(description){
-        if(!authenticated) return
+    async function receiveOffer(description, negotiationId,streamId){
+        if(!authenticated ||
+            selectedStreamId !== streamId ||
+            activeNegotiationId !== negotiationId
+        ) return
 
         if(!description || description.type !== 'offer' || typeof description.sdp !== 'string'){
             log('Oferta SDP invalida')
@@ -749,10 +755,15 @@ export function montarPlayerWebRTC(container, clientId){
             })
         }
         pc.onicecandidate = event => {
-            if(connection !== pc) return
+            if(connection !== pc ||
+                activeNegotiationId !== negotiationId ||
+                selectedStreamId !== streamId
+            ) return
 
             const message = {
                 type: 'webrtc:ice',
+                streamId,
+                negotiationId,
                 candidate: event.candidate ? event.candidate.toJSON() : null
             }
 
@@ -800,17 +811,25 @@ export function montarPlayerWebRTC(container, clientId){
         try{
             await pc.setRemoteDescription(description)
 
-            if(connection !== pc) return
+            if(connection !== pc ||
+                activeNegotiationId !== negotiationId ||
+                selectedStreamId !== streamId
+            ) return
 
             remoteReady = true
 
             const answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
 
-            if(connection !== pc) return
+            if(connection !== pc ||
+                activeNegotiationId !== negotiationId ||
+                selectedStreamId !== streamId
+            ) return
 
             if(!send({
                 type: 'webrtc:answer',
+                streamId,
+                negotiationId,
                 sdp: pc.localDescription.toJSON()
             })){
                 throw new Error('Não foi possivel enviar a resposta SDP')
@@ -830,7 +849,7 @@ export function montarPlayerWebRTC(container, clientId){
         }catch(error){
             log(`Erro de negociação: ${error.message}`)
 
-            if(connection === pc){
+            if(connection === pc && activeNegotiationId === negotiationId){
                 closePeer()
 
                 if(codecPreferences.automatic){
@@ -866,6 +885,7 @@ export function montarPlayerWebRTC(container, clientId){
                 if(typeof message.streamId !== 'string') break
 
                 selectedStreamId = message.streamId
+                activeNegotiationId = null
                 pendingStreamId = null
                 leavingStream = false
 
@@ -879,6 +899,7 @@ export function montarPlayerWebRTC(container, clientId){
                 selectedStreamId = null
                 pendingStreamId = null
                 leavingStream = false
+                activeNegotiationId = null
 
                 closePeer()
                 renderStreamList()
@@ -889,10 +910,17 @@ export function montarPlayerWebRTC(container, clientId){
                 break
 
             case 'webrtc:offer':
-                log('Oferta SDP recebida.')
-                await receiveOffer(message.sdp)
+                if(message.streamId !== selectedStreamId || typeof message.negotiationId !== 'string') break
+                activeNegotiationId = message.negotiationId
+                log(`Oferta SDP recebida: ` +  `${activeNegotiationId.slice(0, 8)}.`)
+                await receiveOffer(message.sdp, message.negotiationId, message.streamId)
                 break
             case 'webrtc:ice':
+                if(message.streamId !== selectedStreamId || 
+                    message.negotiationId !== activeNegotiationId ||
+                    !activeNegotiationId
+                ) break
+
                 pendingRemoteICE.push(message.candidate ?? null)
 
                 if(connection){
@@ -901,6 +929,10 @@ export function montarPlayerWebRTC(container, clientId){
 
                 break
             case 'stream:ended':
+                if(message.streamId && message.streamId !== selectedStreamId) break
+
+                activeNegotiationId = null
+
                 closePeer()
 
                 statusRTC.textContent = 'Transmissão encerrada.'
