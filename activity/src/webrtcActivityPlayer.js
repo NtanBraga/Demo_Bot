@@ -33,6 +33,12 @@ export function montarPlayerWebRTC(container, clientId){
             Ativar som
         </button>
 
+        <div id="rtc-stream-catalog" style="margin-top: 16px;">
+            <h4>Transmissões disponiveis</h4>
+            <p id="rtc-stream-summary">Conecte-se para consultar a lista.</p>
+            <div id="rtc-stream-list"></div>
+        </div>
+
         <video
             id="rtc-video"
             autoplay
@@ -82,6 +88,9 @@ export function montarPlayerWebRTC(container, clientId){
     const video = section.querySelector('#rtc-video');
     const logs = section.querySelector('#rtc-logs');
 
+    const streamSummary = section.querySelector('#rtc-stream-summary')
+    const streamList = section.querySelector('#rtc-stream-list')
+
     const codecAuto = section.querySelector('#rtc-codec-auto');
     const codecSelect = section.querySelector('#rtc-codec-select');
     const codecInfo = section.querySelector('#rtc-codec-info');
@@ -122,6 +131,53 @@ export function montarPlayerWebRTC(container, clientId){
         }
 
         logs.scrollTop = logs.scrollHeight;
+    }
+
+    function renderStreamList(items){
+        const streams = (Array.isArray(items) ? items : [])
+            .filter(stream => stream && 
+                typeof stream.id === 'string' && 
+                (stream.status === 'idle' || stream.status === 'live'))
+            .sort((a,b) => Number(b.status === 'live') - Number(a.status === 'live'))
+
+        streamList.replaceChildren()
+
+        const liveCount = streams.filter(stream => stream.status === 'live').length
+
+        streamSummary.textContent = `${liveCount} ao vivo · ${streams.length} registradas`
+
+        if(streams.length === 0){
+            const empty = document.createElement('p')
+
+            empty.textContent = 'Nenhuma transmissão cadastrada no momento.'
+
+            streamList.appendChild(empty)
+            return
+        }
+
+        for(const stream of streams){
+            const card = document.createElement('div')
+
+            card.style.cssText = `
+                padding: 10px;
+                margin-bottom: 8px;
+                border: 1px solid #777;
+                border-radius: 8px;
+            `
+
+            const title = document.createElement('strong')
+
+            title.textContent = `Transmissão ${stream.id.slice(0, 8)}`
+
+            const state = document.createElement('div')
+
+            state.textContent = stream.status === 'live'
+                ? '● Ao vivo'
+                : '○ Aguardando captura'
+
+            card.append(title, state)
+            streamList.appendChild(card)
+        }
     }
 
     function loadCodecPreferences(){
@@ -398,6 +454,10 @@ export function montarPlayerWebRTC(container, clientId){
         iceServers = [];
 
         closePeer();
+
+        renderStreamList([])
+
+        streamSummary.textContent = 'Conecte-se para consultar a lista.'
 
         if (oldSocket && oldSocket.readyState < WebSocket.CLOSING) {
             oldSocket.close(1000, 'Espectador saiu');
@@ -710,6 +770,9 @@ export function montarPlayerWebRTC(container, clientId){
                 log(`Autenticado. Configurações ICE: ` + `${iceServers.length}`)
 
                 updateButtons()
+                break
+            case 'streams:snapshot':
+                renderStreamList(message.streams)
                 break
             case 'webrtc:offer':
                 log('Oferta SDP recebida.')

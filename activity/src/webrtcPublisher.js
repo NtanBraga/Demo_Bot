@@ -86,6 +86,10 @@ function stopCapture(){
             type: 'publisher:stop'
         })
         log(`Encerramento comunicado aos espectadores.`)
+
+        send({
+            type: 'streams:list'
+        })
     }
 
     for(const viewerId of peers.keys()){
@@ -383,7 +387,30 @@ async function handleMessage(message){
             log(`Autenticado. Configurações ICE recebidas: ` + `${iceServers.length}.`)
 
             updateButtons()
+
+            log(`ID da transmissão: ${message.streamId ?? 'n/d'}`)
+
+            send({
+                type: 'streams:list'
+            })
+
             break
+        case 'streams:snapshot': {
+            const streams = Array.isArray(message.streams)
+                ? message.streams
+                : []
+
+            log(`Catálogo: ${streams.length} transmissão(ões) registrada(s).`)
+
+            for(const stream of streams){
+                log(
+                    `Transmissão ${stream.id?.slice(0, 8)}: ` + 
+                    `${stream.status}` +
+                    (stream.startedAt ? ` (iniciada em ${stream.startedAt})` : '')
+                )
+            }
+            break
+        }
         case 'webrtc:codec-request': {
             const viewerId = message.from
 
@@ -624,6 +651,16 @@ async function startCapture(){
         statusRTC.textContent = 'Capturando. Aguardando espectadores WebRTC...'
 
         updateButtons()
+
+        if(!send({
+            type: 'publisher:started'
+        })) throw new Error('Não foi possivel comunicar o inicio da transmissão')
+
+        log('Estado da transmissão informado: live.')
+
+        send({
+            type: 'streams:list'
+        })
 
         await Promise.all([...viewers].map(openPeer))
     }catch(e){

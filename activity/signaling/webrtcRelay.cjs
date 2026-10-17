@@ -42,6 +42,27 @@ if(!Number.isInteger(PORT) || PORT < 1 || PORT > 65535){
 
 let publisher = null
 const viewers = new Map()
+const streams = new Map()
+
+function getStreamList(){
+    return [...streams.values()].map(stream => ({
+        id: stream.id,
+        status: stream.status,
+        registeredAt: stream.registeredAt,
+        startedAt: stream.startedAt
+    }))
+}
+
+function broadcastStreamList(){
+    const message = {
+        type: 'streams:snapshot',
+        streams: getStreamList()
+    }
+
+    for(const viewer of viewers.values()){
+        send(viewer, message)
+    }
+}
 
 function equalToken(value, expected){
     if(typeof value !== 'string' || value.length > 4096) return false
@@ -142,7 +163,9 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({
             ok: true,
             publisherOnline: Boolean(publisher),
-            viewers: viewers.size
+            viewers: viewers.size,
+            registeredStreams: streams.size,
+            liveStreams: [...streams.values()].filter(stream => stream.status === 'live').length
         }))
 
         return
@@ -175,6 +198,7 @@ wss.on('connection', ws => {
     ws.role = null
     ws.viewerId = null
     ws.alive = true
+    ws.streamId = null
 
     ws.on('pong', () => {
         ws.alive = true
@@ -223,20 +247,43 @@ wss.on('connection', ws => {
                 ws.role = 'publisher'
                 publisher = ws
 
+                const streamId = crypto.randomUUID()
+
+                ws.streamId = streamId
+
+                streams.set(streamId, {
+                    id: streamId,
+                    publisher: ws,
+                    status: 'idle',
+                    registeredAt: new Date().toISOString(),
+                    startedAt: null
+                })
+
+                console.log(`[WebRTC] Transmissão registrada: ${streamId}`)
+
                 clearTimeout(authTimeout)
 
                 send(ws, {
                     type: 'publisher:ready',
+                    streamId,
                     iceServers: iceServers()
                 })
+
+                for(const viewer of viewers.values()){
+                    send(ws, {
+                        type: 'viewer:joined',
+                        viewerId: viewer.viewerId,
+                        codecMode: viewer.codecMode,
+                        codec: viewer.codec
+                    })
+                }
+
+                broadcastStreamList()
 
                 return
             }
 
             if(msg.type === 'viewer:join' && equalToken(msg.token, VIEW_TOKEN)){
-                if(!publisher){
-                    return reject(ws, 'Nenhum transmissor conectado')
-                }
 
                 if(viewers.size >= MAX_VIEWERS){
                     return reject(ws, 'Limite de espectadores atingido')
@@ -262,6 +309,11 @@ wss.on('connection', ws => {
                     iceServers: iceServers()
                 })
 
+                send(ws, {
+                    type: 'streams:snapshot',
+                    streams: getStreamList()
+                })
+
                 send(publisher, {
                     type: 'viewer:joined',
                     viewerId: ws.viewerId,
@@ -272,9 +324,42 @@ wss.on('connection', ws => {
             }
             return reject(ws, 'Autenticação invalida.')
         }
+
+        if(msg.type === 'streams:list'){
+            send(ws, {
+                type: 'streams:snapshot',
+                streams: getStreamList()
+            })
+            return
+        }
+
         if(ws.role === 'publisher'){
 
+            if(msg.type === 'publisher:started'){
+                const stream = streams.get(ws.streamId)
+
+                if(!stream || stream.publisher !== ws){
+                    return reject(ws, 'Transmissão não registrada.')
+                }
+
+                if(stream.status !== 'live'){
+                    stream.status = 'live'
+                    stream.startedAt = new Date().toISOString()
+
+                    console.log(`[WebRTC] Transmissão iniciada: ${stream.id}`)
+                    broadcastStreamList()
+                }
+                return
+            }
+
             if(msg.type === 'publisher:stop'){
+                const stream = streams.get(ws.streamId)
+
+                if(stream && stream.publisher === ws){
+                    stream.status = 'idle'
+                    stream.startedAt = null
+                    broadcastStreamList()
+                }
                 console.log('[WebRTC] Transmissor encerrou a captura.')
 
                 for(const viewer of viewers.values()){
@@ -303,7 +388,7 @@ wss.on('connection', ws => {
             }
             return reject(ws)
         }
-        if(ws.role === 'viewer' && publisher){
+        if(ws.role === 'viewer'){
 
             if(msg.type === 'webrtc:codec-request'){
                 const preference = readCodecPreference(msg)
@@ -329,6 +414,8 @@ wss.on('connection', ws => {
 
                 return
             }
+
+            if(!publisher) return
 
             if(msg.type === 'webrtc:answer' && validSdp(msg.sdp, 'answer')){
                 send(publisher, {
@@ -361,16 +448,19 @@ wss.on('connection', ws => {
                 viewerId: ws.viewerId
             })
         }else if(ws.role === 'publisher' && publisher === ws){
+            streams.delete(ws.streamId)
+
+            console.log(`[WebRTC] Transmissão removida: ${ws.streamId}`)
+
             publisher = null
+
+            broadcastStreamList()
 
             for(const viewer of viewers.values()){
                 send(viewer, {
                     type: 'stream:ended'
-                })
-
-                viewer.close(1012, 'Tranmissão encerrada')
+                })   
             }
-            viewers.clear()
         }
     })
     ws.on('error', () => {})
