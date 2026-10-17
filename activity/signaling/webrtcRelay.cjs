@@ -4,6 +4,7 @@ const http = require('node:http')
 const crypto = require('node:crypto')
 const { WebSocketServer, WebSocket } = require('ws')
 const { tratarTokenDiscord } = require('./discordSOAuth.cjs')
+const { tratarIdentidadeDiscord } = require('./discordIdentity.cjs')
 
 const PORT = Number(process.env.WEBRTC_PORT || 3003)
 const PUBLISH_TOKEN = process.env.WEBRTC_PUBLISH_TOKEN
@@ -242,6 +243,10 @@ function readCodecPreference(message){
 const server = http.createServer((req, res) => {
     if(req.url === '/api/token'){
         void tratarTokenDiscord(req, res)
+        return
+    }
+    if(req.url === '/api/identity'){
+        void tratarIdentidadeDiscord(req, res)
         return
     }
     if(req.method === 'GET' && req.url === '/health'){

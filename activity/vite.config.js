@@ -28,6 +28,10 @@ export default defineConfig(({mode}) => {
                 "/api/token": {
                     target: 'http://127.0.0.1:3003',
                     changeOrigin: true
+                },
+                "/api/identity": {
+                    target: 'http://127.0.0.1:3003',
+                    changeOrigin: true
                 }
             }
         }
