@@ -1,6 +1,7 @@
 import './assets/css/style.css'
 import { DiscordSDK } from "@discord/embedded-app-sdk"
 import { montarPlayerWebRTC } from './webrtcActivityPlayer'
+import { montarParticipantesDiscord } from './discordParticipants'
 
 const CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID
 
@@ -12,10 +13,17 @@ document.querySelector('#app').innerHTML = `
         <h2>Compartilhamento de tela</h2>
       </div>
 
+      <div
+        id="discord-participants"
+        class="discord-participants"
+        role="group"
+        aria-label="Participantes da Activity"
+      ></div>
+
       <p id="discord-status" data-state="connecting" role="status" aria-live="polite">
         Conectando ao Discord...
       </p>
-    </header>
+  </header>
   </main>
 `
 
@@ -39,17 +47,20 @@ async function iniciarActivity(){
 
     await discordSDK.ready()
 
-    discordStatus.textContent = "Conectado ao discord com sucesso"
+    discordStatus.dataset.state = 'connected'
+    discordStatus.textContent = "Discord conectado"
     console.log("[Atividade] SDK conectado.")
     console.log("[Atividade] Channel ID: ", discordSDK.channelId)
     console.log("[Atividade] Guild ID: ", discordSDK.guildId)
 
     const container = document.querySelector("#app main")
-
+    const participantsContainer = document.querySelector('#discord-participants')
+    montarParticipantesDiscord(participantsContainer, discordSDK)
     montarPlayerWebRTC(container, CLIENT_ID)
 
   }catch(e){
     console.error("[Atividade] Erro: ", e)
+    discordStatus.dataset.state = 'error'
     discordStatus.textContent = "Não foi possivel conectar ao Discord"
   }
 }
