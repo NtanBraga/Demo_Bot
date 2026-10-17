@@ -80,6 +80,19 @@ function stopWatching(viewer, notify = true){
         })
 
     }
+
+    for(const otherViewer of viewers.values()){
+        if(otherViewer === viewer || otherViewer.watchingStreamId !== previousId){
+            continue
+        }
+
+        send(otherViewer, {
+            type: 'viewer:departed',
+            streamId: previousId,
+            viewerId: viewer.viewerId
+        })
+    }
+
     if(notify){
         send(viewer, {
             type: 'viewer:unwatched'

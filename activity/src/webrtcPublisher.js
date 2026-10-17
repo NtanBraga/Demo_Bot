@@ -471,7 +471,7 @@ async function handleMessage(message){
 
             closePeer(message.viewerId)
 
-            log(`Espectador saiu` + `${message.viewerId.slice(0, 8)}.`)
+            log(`Espectador saiu: ` + `${message.viewerId.slice(0, 8)}.`)
 
             break
         case 'webrtc:answer': {

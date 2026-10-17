@@ -928,6 +928,10 @@ export function montarPlayerWebRTC(container, clientId){
                 }
 
                 break
+            case 'viewer:departed':
+                if(message.streamId !== selectedStreamId || typeof message.viewerId !== 'string') break
+                log(`O espectador ${message.viewerId.slice(0, 8)} ` + `saiu da transmissão.`)
+                break
             case 'stream:ended':
                 if(message.streamId && message.streamId !== selectedStreamId) break
 
