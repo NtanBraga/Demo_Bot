@@ -24,6 +24,10 @@ export default defineConfig(({mode}) => {
                     target: "ws://127.0.0.1:3001",
                     ws: true,
                     changeOrigin: false
+                },
+                "/api/token": {
+                    target: 'http://127.0.0.1:3003',
+                    changeOrigin: true
                 }
             }
         }
