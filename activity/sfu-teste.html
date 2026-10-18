@@ -1,0 +1,58 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Demo Live - Teste SFU</title>
+    <style>
+        body {
+            background: #171b24;
+            color: #f1f5f9;
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: 32px auto;
+            padding: 16px;
+        }
+
+        button {
+            padding: 10px 16px;
+            margin: 4px;
+            cursor: pointer;
+        }
+
+        video {
+            display: block;
+            width: 100%;
+            max-width: 760px;
+            margin-top: 18px;
+            background: black;
+            border-radius: 10px;
+        }
+
+        pre {
+            background: #10141c;
+            padding: 16px;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+    </style>
+</head>
+<body>
+    <h2>Demo Live - Teste mediasoup SFU</h2>
+
+    <p id="status">Aguardando conexão.</p>
+
+    <button id="connect">1. Conectar ao SFU</button>
+    <button id="publish" disabled>2. Compartilhar tela</button>
+    <button id="watch" disabled>3. Assistir</button>
+    <button id="stop" disabled>Parar transmissão</button>
+
+    <video id="video" autoplay muted playsinline controls></video>
+
+    <h3>Diagnóstico</h3>
+    <pre id="logs"></pre>
+
+    <script type="module" src="./src/sfu-teste.js"></script>
+</body>
+</html>
