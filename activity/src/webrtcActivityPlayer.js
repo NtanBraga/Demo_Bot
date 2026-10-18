@@ -1074,6 +1074,19 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
                 break
             case 'streams:snapshot':
                 renderStreamList(message.streams)
+
+                for(const stream of message.streams ?? []){
+                    const names = (stream.participants ?? [])
+                        .map(user => user.global_name || user.username)
+
+
+                    log(
+                        `Transmissão ${stream.id.slice(0, 8)}: ` +
+                        `${stream.viewerCount ?? 0} espectador(es). ` +
+                        `Discord: ${names.join(', ') || 'nenhum'}`
+                    )
+                }
+
                 break
             case 'viewer:watching': 
                 if(typeof message.streamId !== 'string') break

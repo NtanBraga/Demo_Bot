@@ -47,23 +47,42 @@ let publishers = new Map()
 const viewers = new Map()
 const streams = new Map()
 
-function getStreamList(){
-    return [...streams.values()].map(stream => ({
-        id: stream.id,
-        status: stream.status,
-        registeredAt: stream.registeredAt,
-        startedAt: stream.startedAt
-    }))
+function getStreamList(requester = null){
+    const canSeeIdentities = requester?.role === 'viewer' && Boolean(requester.discordUser)
+
+    return [...streams.values()].map(stream => {
+        const watching = [...viewers.values()].filter(
+            viewer => viewer.watchingStreamId === stream.id
+        )
+
+        const participants = canSeeIdentities
+            ? watching
+                .filter(viewer => viewer.discordUser)
+                .map(viewer => ({
+                    id: viewer.discordUser.id,
+                    username: viewer.discordUser.username,
+                    global_name: viewer.discordUser.global_name,
+                    avatar: viewer.discordUser.avatar
+                }))
+            : []
+
+        return {
+            id: stream.id,
+            status: stream.status,
+            registeredAt: stream.registeredAt,
+            startedAt: stream.startedAt,
+            viewerCount: watching.length,
+            participants
+        }
+    })
 }
 
 function broadcastStreamList(){
-    const message = {
-        type: 'streams:snapshot',
-        streams: getStreamList()
-    }
-
     for(const viewer of viewers.values()){
-        send(viewer, message)
+        send(viewer, {
+            type: 'streams:snapshot',
+            streams: getStreamList(viewer)
+        })
     }
 }
 
@@ -99,6 +118,9 @@ function stopWatching(viewer, notify = true){
         send(viewer, {
             type: 'viewer:unwatched'
         })
+    }
+    if(previousId){
+        broadcastStreamList()
     }
 }
 
@@ -137,6 +159,8 @@ function watchStream(viewer, streamId){
         codecMode: viewer.codecMode,
         codec: viewer.codec
     })
+
+    broadcastStreamList()
 
     console.log(
         `[WebRTC] Viewer ${viewer.viewerId.slice(0, 8)} ` +
@@ -439,7 +463,7 @@ wss.on('connection', ws => {
 
                 send(ws, {
                     type: 'streams:snapshot',
-                    streams: getStreamList()
+                    streams: getStreamList(ws)
                 })
 
                 if(publishers.size === 1 && ws.autoWatch){
@@ -455,7 +479,7 @@ wss.on('connection', ws => {
         if(msg.type === 'streams:list'){
             send(ws, {
                 type: 'streams:snapshot',
-                streams: getStreamList()
+                streams: getStreamList(ws)
             })
             return
         }
