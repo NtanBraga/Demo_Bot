@@ -106,13 +106,14 @@ async function tratarIdentidadeDiscord(req, res){
 
         const authorizationInfo = await response.json()
 
-        if(authorizationInfo.aaplication?.id !== clientId){
+        if(authorizationInfo.application?.id !== clientId){
             return responderJSON(res, 403, {
                 error: 'wrong_application'
             })
         }
+
         if(
-            !Array.isArray(authorization.scopes) ||
+            !Array.isArray(authorizationInfo.scopes) ||
             !authorizationInfo.scopes.includes('identify') || 
             !/^\d{17,20}$/.test(authorizationInfo.user?.id ?? '')
         ){

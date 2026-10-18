@@ -4,7 +4,7 @@ const http = require('node:http')
 const crypto = require('node:crypto')
 const { WebSocketServer, WebSocket } = require('ws')
 const { tratarTokenDiscord } = require('./discordSOAuth.cjs')
-const { tratarIdentidadeDiscord } = require('./discordIdentity.cjs')
+const { tratarIdentidadeDiscord, consumirTicketIdentidade } = require('./discordIdentity.cjs')
 
 const PORT = Number(process.env.WEBRTC_PORT || 3003)
 const PUBLISH_TOKEN = process.env.WEBRTC_PUBLISH_TOKEN
@@ -296,6 +296,7 @@ wss.on('connection', ws => {
     ws.streamId = null
     ws.watchingStreamId = null
     ws.negotiationId = null
+    ws.discordUser = null
 
     ws.on('pong', () => {
         ws.alive = true
@@ -383,6 +384,26 @@ wss.on('connection', ws => {
 
             if(msg.type === 'viewer:join' && equalToken(msg.token, VIEW_TOKEN)){
 
+                let verifiedDiscordUser = null
+
+                if(msg.identityTicket !== undefined){
+                    if(
+                        typeof msg.identityTicket !== 'string' ||
+                        msg.identityTicket.length === 0 ||
+                        msg.identityTicket.length > 128  
+                    ){
+                        return reject(ws, 'Ticker de identidade invalido.')
+                    }
+
+                    verifiedDiscordUser = consumirTicketIdentidade(msg.identityTicket)
+
+                    if(!verifiedDiscordUser){
+                        return reject(ws, 'Ticket de identidade expirado ou utilizado.')
+                    }
+                }
+                ws.discordUser = verifiedDiscordUser
+
+
                 if(viewers.size >= MAX_VIEWERS){
                     return reject(ws, 'Limite de espectadores atingido')
                 }
@@ -406,7 +427,14 @@ wss.on('connection', ws => {
                 send(ws, {
                     type: 'viewer:ready',
                     viewerId: ws.viewerId,
-                    iceServers: iceServers()
+                    iceServers: iceServers(),
+                    discordIdentity: ws.discordUser
+                        ? {
+                            id: ws.discordUser.id,
+                            username: ws.discordUser.username,
+                            global_name: ws.discordUser.global_name
+                        }
+                        : null
                 })
 
                 send(ws, {

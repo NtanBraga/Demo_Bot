@@ -1,6 +1,6 @@
 import './assets/css/webrtcActivityPlayer.css'
 
-export function montarPlayerWebRTC(container, clientId){
+export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
     if(!container) throw new Error('Container do WebRTC não encontrado.')
     if(!/^\d{17,20}$/.test(String(clientId))) throw new Error('Client ID do Discord invalido')
 
@@ -156,6 +156,7 @@ export function montarPlayerWebRTC(container, clientId){
 
     let socket = null;
     let authenticated = false;
+    let connectingSocket = false
 
     let cachedViewerToken = null
     let authenticatingViewerToken = null
@@ -611,7 +612,7 @@ export function montarPlayerWebRTC(container, clientId){
     }
 
     function updateButtons() {
-        connectButton.disabled = socket !== null;
+        connectButton.disabled = socket !== null || connectingSocket;
         disconnectButton.disabled = socket === null;
 
         const hasAudio = remoteStream?.getAudioTracks().some(track => track.readyState === 'live');
@@ -1049,6 +1050,16 @@ export function montarPlayerWebRTC(container, clientId){
             case 'viewer:ready':
                 authenticated = true
 
+                if(message.discordIdentity?.id){
+                    log(
+                        `Identidade Discord verificada: ` +
+                        `${message.discordIdentity.username}`
+                    )
+                }else {
+                    log('Espectador conectado sem identidade Discord verificada.')
+                }
+
+
                 cachedViewerToken = authenticatingViewerToken
                 authenticatingViewerToken = null
 
@@ -1149,8 +1160,8 @@ export function montarPlayerWebRTC(container, clientId){
         }
     }
 
-    function connect(){
-        if(socket) return
+    async function connect(){
+        if(socket || connectingSocket) return
 
         resetAutoCodecOrder()
 
@@ -1161,7 +1172,29 @@ export function montarPlayerWebRTC(container, clientId){
             return
         }
 
+        
         authenticatingViewerToken = token
+
+        connectingSocket = true
+        updateButtons()
+
+        let identityTicket
+
+        try{
+            if (typeof obterTicketDiscord !== 'function'){
+                throw new Error('Autenticação Discord indisponivel.')
+            }
+            identityTicket = await obterTicketDiscord()
+        }catch(e){
+            statusRTC.textContent = 'Falha na identificação Discord.'
+
+            log(`Identidade Discord: ${e.message}`)
+
+            return
+        }finally{
+            connectingSocket = false
+            updateButtons()
+        }
 
         const url = `wss://${clientId}.discordsays.com/.proxy/ws-webrtc`
 
@@ -1179,6 +1212,7 @@ export function montarPlayerWebRTC(container, clientId){
             ws.send(JSON.stringify({
                 type: 'viewer:join',
                 token,
+                identityTicket,
                 autoWatch: false,
                 ...getCodecRequest()
             }))

@@ -48,7 +48,7 @@ export async function montarParticipantesDiscord(container, discordSDK){
             ]
             container.replaceChildren()
 
-            container.setAttribute('aria-label', `${unique-length} participante(s) na Atividade`)
+            container.setAttribute('aria-label', `${unique.length} participante(s) na Atividade`)
         
             if(unique.length === 0){
                 console.log('[Discord] Nenhum participante retornado pelo SDK.')

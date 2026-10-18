@@ -29,6 +29,8 @@ document.querySelector('#app').innerHTML = `
 
 const discordStatus = document.getElementById("discord-status")
 
+let discordAccessToken = null
+
 async function autenticarUsuario(discordSDK){
   console.log('[OAuth] Solicitando autorização')
 
@@ -74,7 +76,36 @@ async function autenticarUsuario(discordSDK){
 
     console.log('[OAuth] Usuario autenticado:', auth.user.username)
 
-    return auth
+    return data.access_token
+}
+
+async function obterTicketDiscord(){
+  if(!discordAccessToken){
+    throw new Error('A autenticação Discord ainda não terminou.')
+  }
+
+  const endpoint = window.location.hostname.endsWith('.discordsays.com')
+    ? '/.proxy/api/identity'
+    : '/api/identity'
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${discordAccessToken}`
+    },
+    cache: 'no-store'
+  })
+  if(!response.ok) throw new Error(`Falha ao obter identidade Discord: HTTP ${response.status}`)
+
+  const result = await response.json()
+
+  if(typeof result.ticket !== 'string' || !result.ticket){
+    throw new Error('O backend não retornou um ticket valido.')
+  }
+
+  console.log('[Discord Identity] Ticket temporario recebido.')
+
+  return result.ticket
 }
 
 async function iniciarActivity(){
@@ -102,10 +133,10 @@ async function iniciarActivity(){
 
     const container = document.querySelector("#app main")
     const participantsContainer = document.querySelector('#discord-participants')
-    montarPlayerWebRTC(container, CLIENT_ID)
+    montarPlayerWebRTC(container, CLIENT_ID, obterTicketDiscord)
 
     try{
-      await autenticarUsuario(discordSDK)
+      discordAccessToken = await autenticarUsuario(discordSDK)
 
       discordStatus.dataset.state = 'connected'
       discordStatus.textContent = "Discord conectado."
