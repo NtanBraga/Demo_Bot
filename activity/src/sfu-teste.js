@@ -11,6 +11,8 @@ const video = document.querySelector('#video')
 const status = document.querySelector('#status')
 const logBox = document.querySelector('#logs')
 const soundButton = document.querySelector('#sound')
+const codecSettings = document.querySelector('#codec-settings')
+const codecSelect = document.querySelector('#video-codec')
 
 if (!['publisher', 'viewer'].includes(role)) {
     status.textContent = 'Use ?role=publisher ou ?role=viewer'
@@ -20,6 +22,7 @@ if (!['publisher', 'viewer'].includes(role)) {
 publishButton.hidden = role !== 'publisher'
 stopButton.hidden = role !== 'publisher'
 watchButton.hidden = role !== 'viewer'
+codecSettings.hidden = role !== 'publisher'
 
 let socket
 let device
@@ -169,6 +172,46 @@ connectButton.addEventListener('click', async () => {
             routerRtpCapabilities: await request('capabilities')
         })
 
+        if (role === 'publisher') {
+            const supportedCodecs = device.sendRtpCapabilities.codecs
+
+            for (const option of codecSelect.options) {
+
+                const mimeType = `video/${option.value}`
+
+                const supported = supportedCodecs.some(
+                    codec => codec.mimeType.toLowerCase() === mimeType
+                )
+
+                option.disabled = !supported
+            }
+
+            if (codecSelect.selectedOptions[0]?.disabled) {
+                const fallback = [...codecSelect.options].find(
+                    option => !option.disabled
+                )
+
+                if (!fallback) throw new Error('Nenhum codec de video disponivel')
+
+                codecSelect.value = fallback.value
+            }
+
+            codecSelect.disabled = false
+
+            log(
+                'Codecs disponiveis para envio: ' +
+                supportedCodecs
+                    .filter(codec =>
+                        ['video/vp8', 'video/h264', 'video/av1']
+                            .includes(codec.mimeType.toLowerCase())
+                    )
+                    .map(codec => codec.mimeType)
+                    .join(', ')
+            )
+        }
+
+
+
         const params = await request('create-transport', {
             direction: role === 'publisher' ? 'send' : 'recv'
         })
@@ -207,6 +250,20 @@ publishButton.addEventListener('click', async () => {
     publishButton.disabled = true
 
     try {
+
+        const selectedCodecName = codecSelect.value
+
+        const selectedCodec = device.sendRtpCapabilities.codecs.find(
+            codec => codec.mimeType.toLowerCase() === `video/${selectedCodecName}`
+        )
+
+        if (!selectedCodec) throw new Error(`Codec ${selectedCodecName.toUpperCase()} nao suportado`)
+        
+
+        codecSelect.disabled = true
+
+        log(`Codec solicitado: ${selectedCodecName.toUpperCase()}`)
+
         capture = await navigator.mediaDevices.getDisplayMedia({
             video: { frameRate: 30 },
             audio: true
@@ -223,18 +280,28 @@ publishButton.addEventListener('click', async () => {
             throw new Error('Browser nao suporta codec de video negociado')
         }
 
-        const vp8 = device.rtpCapabilities.codecs.find(
-            codec => codec.mimeType.toLowerCase() === 'video/vp8'
-        )
-
         const videoProducer = await transport.produce({
             track,
-            ...(vp8 ? { codec: vp8 } : {})
+            codec: selectedCodec
         })
 
         producers.set('video', videoProducer)
 
         log('Video producer publicado: ' + videoProducer.id)
+
+        const negotiatedCodec = videoProducer.rtpParameters.codecs.find(
+            codec => codec.mimeType.toLowerCase().startsWith('video/') &&
+                codec.mimeType.toLowerCase() !== 'video/rtx'
+        )
+
+        log(
+            'Codec negociado para envio: ' +
+            (negotiatedCodec?.mimeType ?? 'desconhecido')
+        )
+
+        if (negotiatedCodec?.mimeType.toLowerCase() !== `video/${selectedCodecName}`) {
+            throw new Error('Codec negociado diferente do solicitado')
+        }
 
         const audioTrack = capture.getAudioTracks()[0]
 
@@ -282,10 +349,35 @@ stopButton.addEventListener('click', async () => {
     try {
         await request('stop')
     } catch (error) {
-        log(error.message)
+
+         log('Erro ao publicar: ' + error.message)
+
+        for (const producer of producers.values()) {
+            producer.close()
+        }
+
+        producers.clear()
+
+        capture?.getTracks().forEach(track => track.stop())
+        capture = null
+
+        video.pause()
+        video.srcObject = null
+
+        if (socket?.readyState === WebSocket.OPEN) {
+            try {
+                await request('stop')
+            } catch (e) {
+                log('Erro ao limpar publicacao: ' + e.message)
+            }
+        }
+
+        codecSelect.disabled = false
+        publishButton.disabled = false
     }
 
     publishButton.disabled = false
+    codecSelect.disabled = false
     status.textContent = 'Transmissao encerrada.'
 })
 
@@ -318,6 +410,16 @@ watchButton.addEventListener('click', async () => {
 
             consumers.set(kind, consumer)
             receivedStream.addTrack(consumer.track)
+
+            if (kind === 'video') {
+                const receivedCodec = consumer.rtpParameters.codecs.find(codec =>
+                    codec.mimeType.toLowerCase().startsWith('video/') &&
+                    codec.mimeType.toLowerCase() !== 'video/rtx'
+                )
+
+                log('Codec de video recebido: ' + (receivedCodec?.mimeType ?? 'desconhecido'))
+            }
+
 
             log(`Consumer ${kind} criado: ${consumer.id}`)
         }

@@ -48,6 +48,16 @@
     <button id="watch" disabled>3. Assistir</button>
     <button id="stop" disabled>Parar transmissão</button>
 
+    <div id="codec-settings">
+        <label for="video-codec">Codec de vídeo:</label>
+
+        <select id="video-codec" disabled>
+            <option value="vp8">VP8</option>
+            <option value="h264">H.264</option>
+            <option value="av1">AV1</option>
+        </select>
+    </div>
+
     <video id="video" autoplay muted playsinline controls></video>
 
     <button id="sound" hidden>
