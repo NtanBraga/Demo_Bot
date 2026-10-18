@@ -515,6 +515,77 @@
     font-size: 15px;
 }
 
+/*espectadores*/
+
+.demo-live-player .rtc-stream-card__audience {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 12px;
+    border-top: 1px solid #40495b;
+    min-width: 0;
+}
+
+.demo-live-player .rtc-stream-card__audience-count {
+    font-size: 12px;
+    font-weight: 500;
+    color: #cbd5e1;
+}
+
+.demo-live-player .rtc-stream-card__audience-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.demo-live-player .rtc-stream-card__avatars {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    padding-left: 6px;
+}
+
+.demo-live-player .rtc-stream-card__avatar {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+    margin-left: -6px;
+    box-sizing: border-box;
+    border: 2px solid #222938;
+    border-radius: 50%;
+    overflow: hidden;
+    background: #39485f;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.demo-live-player .rtc-stream-card__avatar img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.demo-live-player .rtc-stream-card__avatar--extra {
+    background: #40495b;
+    font-size: 10px;
+}
+
+.demo-live-player .rtc-stream-card__audience-names {
+    flex: 1;
+    min-width: 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #aebbd0;
+    overflow-wrap: anywhere;
+}
 
 @keyframes rtc-state-pulse {
     50% {

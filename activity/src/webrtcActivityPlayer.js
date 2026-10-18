@@ -205,6 +205,10 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
             label: 'Conectado',
             placeholder: 'Aguardando reprodução do vídeo...'
         },
+        waiting: {
+            label: 'Aguardando transmissão',
+            placeholder: 'O transmissor ainda não iniciou o compartilhamento.'
+        },
         live: {
             label: 'Reproduzindo',
             placeholder: ''
@@ -236,6 +240,42 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
         playerStateLabel.textContent = config.label
 
         videoPlaceholder.textContent = config.placeholder
+    }
+
+    function criarAvatarEspectador(user){
+        const name = user.global_name || user.username || 'Espectador'
+
+        const avatar = document.createElement('span')
+        avatar.className = 'rtc-stream-card__avatar'
+        avatar.title = name
+        avatar.setAttribute('role', 'img')
+        avatar.setAttribute('aria-label', name)
+
+        const fallback = document.createElement('span')
+        fallback.textContent = name.charAt(0).toUpperCase() || '?'
+        avatar.appendChild(fallback)
+
+        const validId = typeof user.id === 'string' &&
+            /^\d{17,20}$/.test(user.id)
+
+        const validAvatar = typeof user.avatar === 'string' &&
+            /^[a-zA-Z0-9_]+$/.test(user.avatar)
+
+        if(validId && validAvatar){
+            const image = document.createElement('img')
+            image.alt = ''
+            image.loading = 'lazy'
+            image.decoding = 'async'
+
+            image.src = `https://cdn.discordapp.com/avatars/` + `${user.id}/${user.avatar}.webp?size=64`
+
+            image.onerror = () => image.remove()
+
+            avatar.appendChild(image)
+        }
+
+        return avatar
+
     }
 
     function renderStreamList(items){
@@ -336,15 +376,81 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
             }else{
                 action.textContent = isLive
                     ? 'Assistir'
-                    : 'Indisponivel'
-                action.disabled = !authenticated || !isLive || selectedStreamId !== null || pendingStreamId !== null
+                    : 'Aguardar'
+                action.disabled = !authenticated || selectedStreamId !== null || pendingStreamId !== null
                 action.addEventListener('click', () => {
                     watchStream(stream.id)
                 })
             }
 
             footer.append(description, action)
-            card.append(header, footer)
+
+            const viewerCount = Number.isInteger(stream.viewerCount)
+                ? Math.max(0, stream.viewerCount)
+                : 0
+            const participants = Array.isArray(stream.participants)
+                ? [
+                    ...new Map(stream.participants
+                            .filter(user => user && typeof user.id === 'string')
+                            .map(user => [user.id, user])
+                        ).values()
+                ]
+                : []
+
+            const audience = document.createElement('div')
+            audience.className = 'rtc-stream-card__audience'
+
+            const count = document.createElement('span')
+            count.className = 'rtc-stream-card__audience-count'
+
+            count.textContent = viewerCount === 1
+                ? '1 espectador assistindo'
+                : `${viewerCount} espectadores assistindo`
+            
+            audience.appendChild(count)
+
+            if(participants.length > 0){
+                const content = document.createElement('div')
+                content.className = 'rtc-stream-card__audience-content'
+
+                const avatars = document.createElement('div')
+                avatars.className = 'rtc-stream-card__avatars'
+
+                const MAX_AVATARS = 5
+
+                for(const user of participants.slice(0, MAX_AVATARS)){
+                    avatars.appendChild(criarAvatarEspectador(user))
+                }
+
+                const remaining = participants.length - MAX_AVATARS
+
+                if(remaining > 0){
+                    const extra = document.createElement('span')
+                    extra.className = 'rtc-stream-card__avatar rtc-stream-card__avatar--extra'
+                    extra.textContent = `+${remaining}`
+                    extra.title = `${remaining} participantes adicionais`
+
+                    avatars.appendChild(extra)
+                }
+
+                const names = document.createElement('span')
+                names.className = 'rtc-stream-card__audience-names'
+                
+                const visibleNames = participants.slice(0, 3).map(
+                    user => user.global_name || user.username || 'Espectador'
+                )
+
+                names.textContent = visibleNames.join(', ')
+
+                if(participants.length > 3){
+                    names.textContent += ` e mais ${participants.length - 3}`
+                }
+
+                content.append(avatars, names)
+                audience.appendChild(content)
+            }
+
+            card.append(header, audience, footer)
             streamList.appendChild(card)
         }
     }
@@ -352,7 +458,9 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
     function watchStream(streamId){
         if(!authenticated || selectedStreamId || pendingStreamId) return
 
-        const available = latestStreams.some(stream => stream.id === streamId && stream.status === 'live')
+        const available = latestStreams.some(stream => stream.id === streamId &&
+             (stream.status === 'live' || stream.status === 'idle')
+            )
 
         if(!available) return
 
@@ -1074,19 +1182,6 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
                 break
             case 'streams:snapshot':
                 renderStreamList(message.streams)
-
-                for(const stream of message.streams ?? []){
-                    const names = (stream.participants ?? [])
-                        .map(user => user.global_name || user.username)
-
-
-                    log(
-                        `Transmissão ${stream.id.slice(0, 8)}: ` +
-                        `${stream.viewerCount ?? 0} espectador(es). ` +
-                        `Discord: ${names.join(', ') || 'nenhum'}`
-                    )
-                }
-
                 break
             case 'viewer:watching': 
                 if(typeof message.streamId !== 'string') break
@@ -1095,10 +1190,19 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
                 activeNegotiationId = null
                 pendingStreamId = null
                 leavingStream = false
-                setPlayerState('connecting')
+                
+                const currentStream = latestStreams.find(
+                    stream => stream.id === selectedStreamId
+                )
+
+                const isWatching = currentStream?.status === 'idle'
+
+                setPlayerState(isWatching ? 'waiting' : 'connecting')
                 renderStreamList()
 
-                statusRTC.textContent = 'Aguardando oferta WebRTC.'
+                statusRTC.textContent = isWatching
+                    ? 'Aguardando o transmissor compartilhar a tela...'
+                    : 'Aguardando oferta WebRTC.'
 
                 log(`Assistindo à transmissão ${selectedStreamId.slice(0, 8)}.`)
                 break
@@ -1149,7 +1253,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
                 closePeer()
 
                 statusRTC.textContent = 'Transmissão encerrada.'
-                setPlayerState('ended')
+                setPlayerState('waiting')
                 log('O transmissor encerrou a sessão.')
                 break
             case 'error':
