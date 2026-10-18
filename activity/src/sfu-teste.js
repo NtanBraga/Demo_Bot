@@ -10,6 +10,7 @@ const stopButton = document.querySelector('#stop')
 const video = document.querySelector('#video')
 const status = document.querySelector('#status')
 const logBox = document.querySelector('#logs')
+const soundButton = document.querySelector('#sound')
 
 if (!['publisher', 'viewer'].includes(role)) {
     status.textContent = 'Use ?role=publisher ou ?role=viewer'
@@ -23,9 +24,10 @@ watchButton.hidden = role !== 'viewer'
 let socket
 let device
 let transport
-let producer
-let consumer
+let producers = new Map()
+let consumers = new Map()
 let capture
+let receivedStream = null
 
 let nextId = 0
 const pending = new Map()
@@ -58,13 +60,36 @@ function handleMessage(event) {
     const msg = JSON.parse(event.data)
 
     if (msg.event === 'producer-closed') {
-        consumer?.close()
-        consumer = null
-        video.srcObject = null
-        watchButton.disabled = false
-        log('O publisher interrompeu a transmissao')
+        const kind = msg.kind
+        const consumer = consumers.get(kind)
+
+        if(consumer){
+            if(receivedStream) receivedStream.removeTrack(consumer.track)
+
+            consumer.close()
+            consumers.delete(kind)
+        }
+
+        log(`Producer ${kind} encerrado`)
+
+        if(consumers.size === 0){
+            receivedStream = null
+
+            video.pause()
+            video.srcObject = null
+
+            watchButton.disabled = false
+            status.textContent = 'Transmissão encerrada.'
+        }
+
+        if (kind === 'audio') {
+            video.muted = true
+            soundButton.hidden = true
+        }
+
         return
     }
+    
 
     const waiting = pending.get(msg.id)
     if (!waiting) return
@@ -183,8 +208,8 @@ publishButton.addEventListener('click', async () => {
 
     try {
         capture = await navigator.mediaDevices.getDisplayMedia({
-            video: { frameRate: 15 },
-            audio: false
+            video: { frameRate: 30 },
+            audio: true
         })
 
         const track = capture.getVideoTracks()[0]
@@ -202,12 +227,31 @@ publishButton.addEventListener('click', async () => {
             codec => codec.mimeType.toLowerCase() === 'video/vp8'
         )
 
-        producer = await transport.produce({
+        const videoProducer = await transport.produce({
             track,
             ...(vp8 ? { codec: vp8 } : {})
         })
 
-        log('Producer publicado: ' + producer.id)
+        producers.set('video', videoProducer)
+
+        log('Video producer publicado: ' + videoProducer.id)
+
+        const audioTrack = capture.getAudioTracks()[0]
+
+        if(audioTrack){
+            if(!device.canProduce('audio')){
+                log('Codec de audio nao disponivel')
+            }else{
+                const audioProducer = await transport.produce({
+                    track: audioTrack
+                })
+                producers.set('audio', audioProducer)
+
+                log('Audio Producer publicado: ' + audioProducer.id)
+            }
+        }else{
+            log('Nenhuma faixa de audio capturada')
+        }
 
         stopButton.disabled = false
         status.textContent = 'Publisher transmitindo para a Azure.'
@@ -225,8 +269,11 @@ publishButton.addEventListener('click', async () => {
 stopButton.addEventListener('click', async () => {
     stopButton.disabled = true
 
-    producer?.close()
-    producer = null
+    for(const producer of producers.values()){
+        producer.close()
+    }
+
+    producers.clear()
 
     capture?.getTracks().forEach(track => track.stop())
     capture = null
@@ -246,29 +293,88 @@ watchButton.addEventListener('click', async () => {
     watchButton.disabled = true
 
     try {
-        const params = await request('consume', {
-            transportId: transport.id,
-            rtpCapabilities: device.recvRtpCapabilities
-        })
+        receivedStream = new MediaStream()
 
-        consumer = await transport.consume(params)
+        const kinds = ['video', 'audio']
 
-        video.srcObject = new MediaStream([consumer.track])
+        for(const kind of kinds){
+            let params
+
+            try{
+                params = await request('consume', {
+                    transportId: transport.id,
+                    rtpCapabilities: device.recvRtpCapabilities,
+                    kind
+                })
+            }catch(e){
+                if(kind === 'audio' && e.message === 'Producer audio indisponivel'){
+                    log('Publisher nao disponibilizou audio')
+                    continue
+                }
+                throw e
+            }
+
+            const consumer = await transport.consume(params)
+
+            consumers.set(kind, consumer)
+            receivedStream.addTrack(consumer.track)
+
+            log(`Consumer ${kind} criado: ${consumer.id}`)
+        }
+
+        if(!consumers.has('video')){
+            throw new Error('Nenhum consumer de video disponivel')
+        }
+
+        video.srcObject = receivedStream
         video.muted = true
 
-
-        await request('resume-consumer', {
-            consumerId: consumer.id
-        })
-
-        log('Consumer ativo: ' + consumer.id)
+        for(const consumer of consumers.values()){
+            await request('resume-consumer', {
+                consumerId: consumer.id
+            })
+            log(`Consumer ${consumer.kind} retomado`)
+        }
 
         await video.play()
 
-        status.textContent = 'Viewer recebendo video da Azure.'
+        soundButton.hidden = !consumers.has('audio')
+        soundButton.textContent = 'Ativar som'
+
+        status.textContent = 'Viewer recebendo video e audio da Azure.'
+
+        log('Reproducao SFU iniciada.')
 
     } catch (error) {
         log('Erro ao assistir: ' + error.message)
+        
+        for(const consumer of consumers.values()){
+            consumer.close()
+        }
+        consumers.clear()
+
+        receivedStream = null
+        video.srcObject = null
+
         watchButton.disabled = false
+        soundButton.hidden = true
+    }
+})
+soundButton.addEventListener('click', async () => {
+    video.muted = !video.muted
+
+    soundButton.textContent = video.muted
+        ? 'Ativar som'
+        : 'Silenciar'
+
+    if (!video.muted) {
+        try {
+            await video.play()
+        } catch (error) {
+            video.muted = true
+            soundButton.textContent = 'Ativar som'
+
+            log('Erro ao ativar audio: ' + error.message)
+        }
     }
 })
