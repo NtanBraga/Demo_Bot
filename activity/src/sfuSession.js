@@ -30,6 +30,8 @@ export class SfuSession {
         this.statsGeneration = 0
 
         this.mediaQueue = Promise.resolve()
+        this.keepAliveTimer = null
+        this.keepAliveInFlight = false
     }
 
     request(type, data = {}) {
@@ -252,6 +254,10 @@ export class SfuSession {
                     }
                 )
             }
+         
+        this.startKeepAlive()
+
+        console.log('[SFU] Keepalive de sinalização ativado.')
 
         } catch (error) {
             this.close()
@@ -377,7 +383,40 @@ export class SfuSession {
         })
     }
 
-    
+    startKeepAlive() {
+        this.stopKeepAlive()
+
+        this.keepAliveTimer = setInterval(async () => {
+            if (
+                this.closed ||
+                this.keepAliveInFlight ||
+                this.socket?.readyState !== WebSocket.OPEN
+            ) return
+
+            this.keepAliveInFlight = true
+
+            try {
+                await this.request('ping')
+            } catch (error) {
+                if (!this.closed) {
+                    console.warn(
+                        '[SFU] Keepalive falhou:',
+                        error.message
+                    )
+                }
+            } finally {
+                this.keepAliveInFlight = false
+            }
+        }, 15000)
+    }
+
+    stopKeepAlive() {
+        if (this.keepAliveTimer !== null) {
+            clearInterval(this.keepAliveTimer)
+            this.keepAliveTimer = null
+        }
+    }
+
     startStats(callback) {
         this.stopStats()
         if (typeof callback !== 'function') return
@@ -596,6 +635,7 @@ export class SfuSession {
 
         this.closed = true
         this.stopStats()
+        this.stopKeepAlive()
 
         for (const waiter of this.pending.values()) {
             clearTimeout(waiter.timer)

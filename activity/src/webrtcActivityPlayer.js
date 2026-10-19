@@ -1423,11 +1423,12 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
                         }
                     },
 
-                    onClose: ({ reason } = {}) => {
+                    onClose: ({ code, reason } = {}) => {
                         if (sfuSession !== session) return
 
                         log(
-                            'Conexão SFU interrompida: ' +
+                            `Conexão SFU interrompida ` +
+                            `(código ${code ?? 'n/d'}): ` +
                             (reason || 'Sem motivo informado')
                         )
 
@@ -1505,19 +1506,6 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
 
                             log('Falha ao iniciar reprodução SFU: ' + error.message)
                         })
-
-                    cancelSfuRetry()
-                    sfuRetryAttempts = 0
-
-                    session.startStats(stats => {
-                        if (sfuSession === session) {
-                            sfuStatsBox.textContent = formatSfuStats(stats)
-                        }
-                    })
-
-                    setPlayerState('live')
-                    updateButtons()
-
                 } catch (error) {
                     log('Erro SFU: ' + error.message)
 
