@@ -30,6 +30,7 @@ document.querySelector('#app').innerHTML = `
 const discordStatus = document.getElementById("discord-status")
 
 let discordAccessToken = null
+let discordAuthPromise = null
 
 async function autenticarUsuario(discordSDK){
   console.log('[OAuth] Solicitando autorização')
@@ -80,8 +81,12 @@ async function autenticarUsuario(discordSDK){
 }
 
 async function obterTicketDiscord(){
-  if(!discordAccessToken){
-    throw new Error('A autenticação Discord ainda não terminou.')
+  if (!discordAccessToken && discordAuthPromise) {
+    discordAccessToken = await discordAuthPromise
+  }
+
+  if (!discordAccessToken) {
+    throw new Error('Autenticação Discord indisponível.')
   }
 
   const endpoint = window.location.hostname.endsWith('.discordsays.com')
