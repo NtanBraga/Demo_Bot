@@ -30,6 +30,10 @@ export default defineConfig(({mode}) => {
                     ws: true,
                     changeOrigin: false
                 },
+                "/api/publisher": {
+                    target: "http://127.0.0.1:3003",
+                    changeOrigin: true
+                },
                 "/api/token": {
                     target: 'http://127.0.0.1:3003',
                     changeOrigin: true

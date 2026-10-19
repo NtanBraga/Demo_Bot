@@ -6,6 +6,7 @@ const { WebSocketServer, WebSocket } = require('ws')
 const { tratarTokenDiscord } = require('./discordSOAuth.cjs')
 const { tratarIdentidadeDiscord, consumirTicketIdentidade } = require('./discordIdentity.cjs')
 const { criarCredencialSFU } = require('./sfuAccess.cjs')
+const { tratarPublisherOAuth } = require('./publisherOAuth.cjs')
 
 const PORT = Number(process.env.WEBRTC_PORT || 3003)
 const PUBLISH_TOKEN = process.env.WEBRTC_PUBLISH_TOKEN
@@ -269,6 +270,14 @@ function readCodecPreference(message){
 }
 
 const server = http.createServer((req, res) => {
+    
+    const pathname = new URL(req.url, 'http://localhost').pathname
+
+    if (pathname.startsWith('/api/publisher/')) {
+        void tratarPublisherOAuth(req, res)
+        return
+    }
+
     if(req.url === '/api/token'){
         void tratarTokenDiscord(req, res)
         return

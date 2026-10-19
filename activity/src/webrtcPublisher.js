@@ -1,6 +1,8 @@
 import { SfuSession,formatSfuStats } from './sfuSession.js'
 
 const keyInput = document.querySelector('#publisher-key');
+const discordLoginButton = document.querySelector('#publisher-discord-login')
+const discordStatus = document.querySelector('#publisher-discord-status')
 const connectButton = document.querySelector('#connect-webrtc');
 const startButton = document.querySelector('#start-webrtc');
 const stopButton = document.querySelector('#stop-webrtc');
@@ -91,6 +93,49 @@ function log(message) {
 
     logBox.scrollTop = logBox.scrollHeight;
 }
+
+async function verificarLoginDiscord() {
+    try {
+        const response = await fetch('/api/publisher/me', {
+            credentials: 'same-origin',
+            cache: 'no-store'
+        })
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`)
+        }
+
+        const data = await response.json()
+
+        if (data.authenticated && data.user) {
+            const name =
+                data.user.global_name ||
+                data.user.username
+
+            discordStatus.textContent = `Discord autenticado: ${name}`
+
+            discordLoginButton.hidden = true
+
+            log('Identidade Discord do publisher verificada.')
+        } else {
+            discordStatus.textContent = 'Discord: não autenticado.'
+
+            discordLoginButton.hidden = false
+        }
+
+    } catch (error) {
+        discordStatus.textContent = 'Não foi possível verificar o login Discord.'
+
+        console.error('[Publisher OAuth] Falha:', error.message)
+    }
+}
+
+discordLoginButton.addEventListener('click', () => {
+    window.location.assign('/api/publisher/login')
+})
+
+void verificarLoginDiscord()
+
 
 function normalizeCodecPreference(codecMode, codec){
     return {
