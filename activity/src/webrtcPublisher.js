@@ -1,4 +1,4 @@
-import { SfuSession } from './sfuSession.js'
+import { SfuSession,formatSfuStats } from './sfuSession.js'
 
 const keyInput = document.querySelector('#publisher-key');
 const connectButton = document.querySelector('#connect-webrtc');
@@ -20,12 +20,63 @@ const USE_SFU = true
 let sfuSession = null
 let sfuReady = false
 
+let cachedPublisherToken = null
+let pendingPublisherToken = null
+
+let sfuGrantPending = false
+let sfuGrantTimeout = null
+let sfuRetryTimer = null
+let sfuRetryAttempts = 0
+
+let relayRetryTimer = null
+let relayRetryAttempts = 0
+
+let closingPage = false
+
 const viewers = new Set();
 const peers = new Map();
 
 const viewerCodecPreferences = new Map()
 
 const VALID_VIDEO_CODECS = ['h264', 'av1', 'vp8']
+
+const sfuCodecWrapper = document.createElement('label')
+
+sfuCodecWrapper.textContent = 'Codec de transmissão SFU: '
+
+const sfuCodecSelect = document.createElement('select')
+
+sfuCodecSelect.id = 'publisher-sfu-codec'
+
+for (const codec of ['h264', 'vp8', 'av1']) {
+    const option = document.createElement('option')
+
+    option.value = codec
+    option.textContent = codec.toUpperCase()
+
+    sfuCodecSelect.appendChild(option)
+}
+
+sfuCodecSelect.value = 'h264'
+
+sfuCodecWrapper.appendChild(sfuCodecSelect)
+
+sfuCodecWrapper.hidden = !USE_SFU
+
+audioMode.parentElement.insertAdjacentElement(
+    'afterend',
+    sfuCodecWrapper
+)
+
+const sfuStatsBox = document.createElement('pre')
+
+sfuStatsBox.id = 'publisher-sfu-stats'
+sfuStatsBox.textContent = 'Aguardando conexão SFU.'
+
+sfuStatsBox.hidden = !USE_SFU
+
+logBox.insertAdjacentElement('beforebegin', sfuStatsBox)
+
 
 function log(message) {
     const line = `[${new Date().toLocaleTimeString()}] ${message}`;
@@ -54,6 +105,32 @@ function updateButtons(){
     startButton.disabled = !authenticated || (USE_SFU && !sfuReady) || captureStream !== null || capturing
     stopButton.disabled = captureStream === null
     audioMode.disabled = captureStream !== null || capturing
+
+    sfuCodecSelect.disabled =
+        !sfuReady ||
+        captureStream !== null ||
+        capturing
+
+    if (USE_SFU && sfuReady && sfuSession?.device) {
+        const supported = sfuSession.device.sendRtpCapabilities.codecs
+
+        for (const option of sfuCodecSelect.options) {
+            option.disabled = !supported.some(codec =>
+                codec.mimeType.toLowerCase() ===
+                `video/${option.value}`
+            )
+        }
+
+        if (sfuCodecSelect.selectedOptions[0]?.disabled) {
+            const fallback = [...sfuCodecSelect.options].find(
+                option => !option.disabled
+            )
+
+            if (fallback) {
+                sfuCodecSelect.value = fallback.value
+            }
+        }
+    }
 }
 
 function send(message){
@@ -62,6 +139,83 @@ function send(message){
     socket.send(JSON.stringify(message))
 
     return true
+}
+
+function clearSfuGrantPending() {
+    sfuGrantPending = false
+
+    if (sfuGrantTimeout !== null) {
+        clearTimeout(sfuGrantTimeout)
+        sfuGrantTimeout = null
+    }
+}
+
+function requestPublisherSfuGrant() {
+    if (
+        !USE_SFU ||
+        closingPage ||
+        !authenticated ||
+        sfuSession ||
+        sfuGrantPending
+    ) return
+
+    sfuGrantPending = send({
+        type: 'publisher:sfu-grant'
+    })
+
+    if (!sfuGrantPending) return
+
+    sfuGrantTimeout = setTimeout(() => {
+        sfuGrantTimeout = null
+        sfuGrantPending = false
+
+        log('SFU: resposta de autorização demorou.')
+
+        schedulePublisherSfuRetry()
+    }, 8000)
+}
+
+function schedulePublisherSfuRetry() {
+    if (
+        !USE_SFU ||
+        closingPage ||
+        !authenticated ||
+        sfuSession ||
+        sfuRetryTimer
+    ) return
+
+    const delay = Math.min(
+        1000 * (2 ** Math.min(sfuRetryAttempts++, 4)),
+        10000
+    )
+
+    log(`SFU: nova tentativa em ${delay / 1000}s.`)
+
+    sfuRetryTimer = setTimeout(() => {
+        sfuRetryTimer = null
+        requestPublisherSfuGrant()
+    }, delay)
+}
+
+function schedulePublisherRelayRetry() {
+    if (
+        closingPage ||
+        !cachedPublisherToken ||
+        socket ||
+        relayRetryTimer
+    ) return
+
+    const delay = Math.min(
+        1000 * (2 ** Math.min(relayRetryAttempts++, 4)),
+        10000
+    )
+
+    log(`Relay: reconectando em ${delay / 1000}s.`)
+
+    relayRetryTimer = setTimeout(() => {
+        relayRetryTimer = null
+        connect()
+    }, delay)
 }
 
 function closePeer(viewerId){
@@ -89,6 +243,8 @@ function stopCapture(){
     captureStream = null
 
     if (USE_SFU && sfuSession) {
+        sfuSession.stopStats()
+        sfuStatsBox.textContent = 'Transmissão parada.'
         sfuSession.stopPublishing().catch(error => {
             log('Falha ao parar SFU: ' + error.message)
         })
@@ -399,11 +555,17 @@ async function handleMessage(message){
     switch(message.type){
         case 'publisher:ready':
             authenticated = true
+            cachedPublisherToken = pendingPublisherToken
+            pendingPublisherToken = null
+
+            relayRetryAttempts = 0
+            sfuRetryAttempts = 0
+
+            clearTimeout(relayRetryTimer)
+            relayRetryTimer = null
 
             if (USE_SFU) {
-                send({
-                    type: 'publisher:sfu-grant'
-                })
+                requestPublisherSfuGrant()
             }
 
             iceServers = Array.isArray(message.iceServers) ? message.iceServers : []
@@ -424,10 +586,16 @@ async function handleMessage(message){
         case 'publisher:sfu-grant': {
             if (!USE_SFU) break
 
+            clearSfuGrantPending()
+
+            if (sfuSession) break
+
             if (!message.ok) {
                 log('Autorizacao SFU: ' + message.error)
+                schedulePublisherSfuRetry()
                 break
             }
+            
 
             const roomId = message.streamId
 
@@ -448,15 +616,25 @@ async function handleMessage(message){
                 roomId,
                 url: url.toString(),
 
-                onClose: () => {
+                onClose: ({ reason } = {}) => {
                     if (sfuSession !== session) return
 
                     sfuSession = null
                     sfuReady = false
 
-                    log('Conexao com a Azure encerrada.')
-                    stopCapture()
+                    log(
+                        'SFU desconectado: ' +
+                        (reason || 'Conexão interrompida')
+                    )
+
+                    if (captureStream && authenticated) {
+                        send({
+                            type: 'publisher:stop'
+                        })
+                    }
+
                     updateButtons()
+                    schedulePublisherSfuRetry()
                 }
             })
 
@@ -465,11 +643,54 @@ async function handleMessage(message){
             try {
                 await session.connect(message.token)
 
-                if (sfuSession !== session) break
+                if (sfuSession !== session) {
+                    session.close()
+                    break
+                }
 
                 sfuReady = true
+                sfuRetryAttempts = 0
+
+                clearTimeout(sfuRetryTimer)
+                sfuRetryTimer = null
 
                 log('Publisher conectado ao mediasoup na Azure.')
+
+                const streamToRestore = captureStream
+
+                if (
+                    streamToRestore &&
+                    streamToRestore.getVideoTracks().some(
+                        track => track.readyState === 'live'
+                    )
+                ) {
+                    log('SFU: restaurando a transmissão existente.')
+
+                    await session.publish(
+                        streamToRestore,
+                        sfuCodecSelect.value
+                    )
+
+                    if (
+                        sfuSession !== session ||
+                        captureStream !== streamToRestore
+                    ) {
+                        await session.stopPublishing().catch(() => {})
+                        break
+                    }
+
+                    send({
+                        type: 'publisher:started'
+                    })
+
+                    log('SFU: vídeo e áudio republicados.')
+                }
+
+                session.startStats(stats => {
+                    if (sfuSession === session) {
+                        sfuStatsBox.textContent = formatSfuStats(stats)
+                    }
+                })
                 statusRTC.textContent = 'SFU conectado. Pronto para compartilhar.'
 
                 updateButtons()
@@ -483,6 +704,8 @@ async function handleMessage(message){
                 session.close()
 
                 log('Falha ao conectar SFU: ' + error.message)
+                schedulePublisherSfuRetry()
+
                 updateButtons()
             }
 
@@ -610,12 +833,13 @@ async function handleMessage(message){
 function connect(){
     if(socket) return
 
-    let token = keyInput.value.trim()
+    let token = keyInput.value.trim() || cachedPublisherToken
 
     if(!token){
         statusRTC.textContent = 'Infome a chave de transmissor.'
         return
     }
+    pendingPublisherToken = token
 
     const url = new URL('/ws-webrtc', location.href)
 
@@ -672,17 +896,29 @@ function connect(){
         viewers.clear()
         viewerCodecPreferences.clear()
 
-        stopCapture()
+        const oldSession = sfuSession
 
-        sfuSession?.close()
         sfuSession = null
         sfuReady = false
+
+        oldSession?.close()
+        clearSfuGrantPending()
+
+        clearTimeout(sfuRetryTimer)
+        sfuRetryTimer = null
+
+        if (!USE_SFU || closingPage || !cachedPublisherToken) {
+            stopCapture()
+        } else {
+            statusRTC.textContent = 'Relay desconectado. Tentando reconectar...'
+        }
 
         statusRTC.textContent = `Sinalização desconectada (${event.code}).`
 
         log(`WebSocket fechado: ${event.code}.`)
 
         updateButtons()
+        schedulePublisherRelayRetry()
     })
     ws.addEventListener('error', () => {
         log(`Falha na conexão WebSocket.`)
@@ -760,9 +996,17 @@ async function startCapture(){
                 throw new Error('SFU ainda nao conectado')
             }
 
-            await sfuSession.publish(stream, 'h264')
+            await sfuSession.publish(stream, sfuCodecSelect.value)
 
             log('Video e audio publicados no mediasoup.')
+
+            const session = sfuSession
+
+            session.startStats(stats => {
+                if (sfuSession === session) {
+                    sfuStatsBox.textContent = formatSfuStats(stats)
+                }
+            })
         }
 
         statusRTC.textContent = 'Capturando. Aguardando espectadores WebRTC...'
@@ -799,6 +1043,13 @@ stopButton.addEventListener('click', () => {
 })
 
 window.addEventListener('pagehide', () => {
+    closingPage = true
+
+    clearTimeout(sfuRetryTimer)
+    clearTimeout(relayRetryTimer)
+    clearTimeout(sfuGrantTimeout)
+
+    cachedPublisherToken = null
     stopCapture()
     sfuSession?.close()
     socket?.close(1000, 'Pagina encerrada.')
