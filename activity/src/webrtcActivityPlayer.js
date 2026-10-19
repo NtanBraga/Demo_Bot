@@ -153,6 +153,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
         lastWorkingCodec: null
     }
 
+    const TESTAR_CREDENCIAL_SFU = true
+
 
     let socket = null;
     let authenticated = false;
@@ -1205,7 +1207,31 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
                     : 'Aguardando oferta WebRTC.'
 
                 log(`Assistindo à transmissão ${selectedStreamId.slice(0, 8)}.`)
+
+                if (TESTAR_CREDENCIAL_SFU) {
+                    send({
+                        type: 'viewer:sfu-grant',
+                        streamId: selectedStreamId
+                    })
+                }
+
+
                 break
+            case 'viewer:sfu-grant':
+
+            if (!TESTAR_CREDENCIAL_SFU) break
+
+            if (!message.ok) {
+                log('SFU autorização negada: ' + message.error)
+            } else {
+                log(
+                    `SFU credencial emitida: sala ${
+                        message.streamId.slice(0, 8)
+                    }; validade ${message.expiresIn}s`
+                )
+            }
+
+            break
             case 'viewer:unwatched':
                 selectedStreamId = null
                 pendingStreamId = null

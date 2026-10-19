@@ -5,6 +5,7 @@ const crypto = require('node:crypto')
 const { WebSocketServer, WebSocket } = require('ws')
 const { tratarTokenDiscord } = require('./discordSOAuth.cjs')
 const { tratarIdentidadeDiscord, consumirTicketIdentidade } = require('./discordIdentity.cjs')
+const { criarCredencialSFU } = require('./sfuAccess.cjs')
 
 const PORT = Number(process.env.WEBRTC_PORT || 3003)
 const PUBLISH_TOKEN = process.env.WEBRTC_PUBLISH_TOKEN
@@ -569,6 +570,55 @@ wss.on('connection', ws => {
         }
         if(ws.role === 'viewer'){
 
+            if (msg.type === 'viewer:sfu-grant') {
+                const roomId = ws.watchingStreamId
+                const stream = streams.get(roomId)
+
+                if (
+                    !ws.discordUser?.id ||
+                    typeof msg.streamId !== 'string' ||
+                    msg.streamId !== roomId ||
+                    !stream ||
+                    stream.publisher?.readyState !== WebSocket.OPEN
+                ) {
+                    send(ws, {
+                        type: 'viewer:sfu-grant',
+                        ok: false,
+                        error: 'Acesso SFU negado'
+                    })
+                    return
+                }
+
+                try {
+                    const token = criarCredencialSFU({
+                        roomId,
+                        role: 'viewer',
+                        userId: ws.discordUser.id
+                    })
+
+                    send(ws, {
+                        type: 'viewer:sfu-grant',
+                        ok: true,
+                        streamId: roomId,
+                        token,
+                        expiresIn: 30
+                    })
+
+                } catch (error) {
+                    console.error(
+                        '[SFU] Falha ao assinar credencial:',
+                        error.message
+                    )
+
+                    send(ws, {
+                        type: 'viewer:sfu-grant',
+                        ok: false,
+                        error: 'Credencial indisponivel'
+                    })
+                }
+
+                return
+            }
 
             if(msg.type === 'viewer:watch'){
                 if(typeof msg.streamId !== 'string' || msg.streamId.length > 64){

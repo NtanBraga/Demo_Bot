@@ -1,7 +1,10 @@
 
 import { Device } from 'mediasoup-client'
 
-const role = new URLSearchParams(location.search).get('role')
+const query = new URLSearchParams(location.search)
+
+const role = query.get('role')
+const roomId = query.get('room') || 'teste'
 
 const connectButton = document.querySelector('#connect')
 const publishButton = document.querySelector('#publish')
@@ -410,9 +413,12 @@ connectButton.addEventListener('click', async () => {
     connectButton.disabled = true
 
     try {
-        socket = new WebSocket(
-            'ws://127.0.0.1:3004/?role=' + role
-        )
+        const wsUrl = new URL('ws://127.0.0.1:3004/')
+
+        wsUrl.searchParams.set('role', role)
+        wsUrl.searchParams.set('room', roomId)
+
+        socket = new WebSocket(wsUrl.toString())
 
         socket.addEventListener('message', handleMessage)
 
