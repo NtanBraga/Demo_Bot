@@ -694,12 +694,16 @@ wss.on('connection', (ws) => {
                 ws.codecMode = preference.codecMode
                 ws.codec = preference.codec
 
-                send(selectedPublisher, {
-                    type: 'webrtc:codec-request',
-                    from: ws.viewerId,
-                    codecMode: ws.codecMode,
-                    codec: ws.codec
-                })
+                const selectedStream = streams.get(ws.watchingStreamId)
+
+                if (selectedStream?.mode !== 'sfu') {
+                    send(selectedPublisher, {
+                        type: 'webrtc:codec-request',
+                        from: ws.viewerId,
+                        codecMode: ws.codecMode,
+                        codec: ws.codec
+                    })
+                }
 
                 console.log(
                     `[WebRTC] Espectador ${ws.viewerId.slice(0, 8)} ` +
