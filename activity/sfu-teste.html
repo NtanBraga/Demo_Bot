@@ -56,9 +56,21 @@
             <option value="h264">H.264</option>
             <option value="av1">AV1</option>
         </select>
+        <label for="capture-fps">FPS solicitados:</label>
+
+        <select id="capture-fps">
+            <option value="30">30 FPS</option>
+            <option value="60">60 FPS</option>
+        </select>
     </div>
 
     <video id="video" autoplay muted playsinline controls></video>
+
+    <h3>Estatísticas WebRTC em tempo real</h3>
+
+    <pre id="stats">
+    Aguardando transmissão...
+    </pre>
 
     <button id="sound" hidden>
         Ativar som
