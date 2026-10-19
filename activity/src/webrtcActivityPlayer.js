@@ -176,6 +176,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
     let socket = null;
     let authenticated = false;
     let connectingSocket = false
+    let connectGeneration = 0
 
     let cachedViewerToken = null
     let authenticatingViewerToken = null
@@ -947,6 +948,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
 
     function disconnect(manual = true) {
 
+        connectGeneration++
+
         if (manual === true || manual?.type) {
             autoReconnectRelay = false
             cachedViewerToken = null
@@ -1383,6 +1386,15 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
                             return
                         }
 
+                        if (event.event === 'publisher-disconnected') {
+                            log('SFU: transmissor desconectado da Azure.')
+
+                            closePeer()
+                            setPlayerState('reconnecting')
+
+                            scheduleSfuRetry()
+                        }
+
                         if (event.event === 'producer-closed') {
                             log(`SFU: Producer ${event.kind} encerrado.`)
 
@@ -1608,6 +1620,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
     async function connect(){
         if(socket || connectingSocket) return
 
+        const generation = ++connectGeneration
+
         resetAutoCodecOrder()
 
         let token = keyInput.value.trim() || cachedViewerToken
@@ -1635,7 +1649,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
 
             log(`Identidade Discord: ${e.message}`)
             if (autoReconnectRelay) {
-                scheduleRelayRetry()
+                queueMicrotask(scheduleRelayRetry)
             }   
 
             return
@@ -1643,6 +1657,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
             connectingSocket = false
             updateButtons()
         }
+
+        if (generation !== connectGeneration) return
 
         const url = `wss://${clientId}.discordsays.com/.proxy/ws-webrtc`
 

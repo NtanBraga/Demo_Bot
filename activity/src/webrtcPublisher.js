@@ -909,11 +909,11 @@ function connect(){
 
         if (!USE_SFU || closingPage || !cachedPublisherToken) {
             stopCapture()
-        } else {
-            statusRTC.textContent = 'Relay desconectado. Tentando reconectar...'
-        }
 
-        statusRTC.textContent = `Sinalização desconectada (${event.code}).`
+            statusRTC.textContent = `Sinalização desconectada (${event.code}).`
+        } else {
+            statusRTC.textContent = `Relay desconectado (${event.code}). Tentando reconectar...`
+        }
 
         log(`WebSocket fechado: ${event.code}.`)
 
@@ -992,15 +992,28 @@ async function startCapture(){
         }
 
         if (USE_SFU) {
-            if (!sfuReady || !sfuSession) {
+            const session = sfuSession
+
+            if (!sfuReady || !session) {
                 throw new Error('SFU ainda nao conectado')
             }
 
-            await sfuSession.publish(stream, sfuCodecSelect.value)
+            await session.publish(stream, sfuCodecSelect.value)
+
+            if (
+                captureStream !== stream ||
+                sfuSession !== session ||
+                session.closed ||
+                !authenticated
+            ) {
+                await session.stopPublishing().catch(error => {
+                    log('Falha ao limpar publicação cancelada: ' + error.message)
+                })
+
+                return
+            }
 
             log('Video e audio publicados no mediasoup.')
-
-            const session = sfuSession
 
             session.startStats(stats => {
                 if (sfuSession === session) {
@@ -1009,6 +1022,8 @@ async function startCapture(){
             })
         }
 
+        if (captureStream !== stream || !authenticated) return
+        
         statusRTC.textContent = 'Capturando. Aguardando espectadores WebRTC...'
 
         updateButtons()
