@@ -91,7 +91,15 @@ export class SfuSession {
             }
         })
 
-        socket.addEventListener('close', () => {
+        socket.addEventListener('close', event => {
+            console.error('[SFU] WebSocket encerrado:', {
+                role: this.role,
+                roomId: this.roomId,
+                code: event.code,
+                reason: event.reason || 'Sem motivo informado',
+                wasClean: event.wasClean
+            })
+
             if (this.closed) return
 
             this.close()
@@ -122,7 +130,43 @@ export class SfuSession {
 
             await this.request('authenticate', { token })
 
-            this.device = new Device()
+            const constructors = [
+            ['RTCPeerConnection', window.RTCPeerConnection],
+            ['webkitRTCPeerConnection', window.webkitRTCPeerConnection]
+        ]
+
+        let rtcCtor = null
+
+        for (const [name, Ctor] of constructors) {
+            if (typeof Ctor !== 'function') {
+                console.log(`[SFU] ${name} indisponivel:`, typeof Ctor)
+                continue
+            }
+
+            try {
+                const test = new Ctor({ iceServers: [] })
+                test.close()
+
+                rtcCtor = Ctor
+                console.log(`[SFU] Construtor WebRTC funcional: ${name}`)
+                break
+            } catch (error) {
+                console.warn(`[SFU] ${name} falhou:`, error.message)
+            }
+        }
+
+        if (!rtcCtor) {
+            throw new Error(
+                'Nenhum construtor RTCPeerConnection funcional na Activity.'
+            )
+        }
+
+        if (window.RTCPeerConnection !== rtcCtor) {
+            window.RTCPeerConnection = rtcCtor
+        }
+
+        this.device = new Device()
+        console.log('[SFU] Handler mediasoup:', this.device.handlerName)
 
             await this.device.load({
                 routerRtpCapabilities:

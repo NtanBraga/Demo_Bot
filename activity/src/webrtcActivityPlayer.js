@@ -157,7 +157,6 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
         lastWorkingCodec: null
     }
 
-    const TESTAR_CREDENCIAL_SFU = true
 
 
     let socket = null;
@@ -1361,12 +1360,6 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
 
                 log(`Assistindo à transmissão ${selectedStreamId.slice(0, 8)}.`)
 
-                if (TESTAR_CREDENCIAL_SFU) {
-                    send({
-                        type: 'viewer:sfu-grant',
-                        streamId: selectedStreamId
-                    })
-                }
                 solicitarSFUSeNecessario()
 
                 break
