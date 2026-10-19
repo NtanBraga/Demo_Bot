@@ -1,7 +1,7 @@
 import './assets/css/webrtcActivityPlayer.css'
 import { SfuSession, formatSfuStats } from './sfuSession.js'
 
-export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
+export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, discordSDK){
     if(!container) throw new Error('Container do WebRTC não encontrado.')
     if(!/^\d{17,20}$/.test(String(clientId))) throw new Error('Client ID do Discord invalido')
 
@@ -17,20 +17,30 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
             Informe a chave para assistir.
         </p>
 
-        <input
-            id="rtc-key"
-            type="password"
-            placeholder="Chave de visualização"
-            autocomplete="off"
-        >
+        <div class="rtc-connect-controls">
+            <div class="rtc-connect-fields">
+                <input
+                    id="rtc-key"
+                    type="password"
+                    placeholder="Chave de visualização"
+                    autocomplete="off"
+                >
 
-        <button id="rtc-connect">
-            Conectar ao catalogo
-        </button>
+                <button id="rtc-connect" type="button">
+                    Conectar ao catálogo
+                </button>
+            </div>
 
-        <button id="rtc-disconnect" disabled>
-            Desconectar
-        </button>
+            <div class="rtc-connect-actions">
+                <button id="rtc-transmit" type="button">
+                    Transmitir
+                </button>
+
+                <button id="rtc-disconnect" type="button" disabled>
+                    Desconectar
+                </button>
+            </div>
+        </div>
 
         <div id="rtc-stream-catalog">
             <h4>Transmissões disponiveis</h4>
@@ -124,6 +134,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
 
     const connectButton = section.querySelector('#rtc-connect');
     const disconnectButton = section.querySelector('#rtc-disconnect');
+    const transmitButton = section.querySelector('#rtc-transmit');
     const soundButton = section.querySelector('#rtc-sound');
 
     const playerPanel = section.querySelector('#rtc-player-panel')
@@ -1783,6 +1794,50 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
 
     connectButton.addEventListener('click', connect)
     disconnectButton.addEventListener('click', disconnect)
+    transmitButton.addEventListener('click', async () => {
+        const publisherURL = import.meta.env.VITE_PUBLISHER_URL
+
+        if (!publisherURL) {
+            statusRTC.textContent =
+                'Endereço do transmissor não configurado.'
+
+            return
+        }
+
+        try {
+            const url = new URL(publisherURL)
+
+            if (url.protocol !== 'https:') {
+                throw new Error(
+                    'O transmissor precisa de uma URL HTTPS.'
+                )
+            }
+
+            transmitButton.disabled = true
+
+            const result = await discordSDK.commands.openExternalLink({
+                url: url.toString()
+            })
+
+            if (result?.opened === false) {
+                log('A abertura do transmissor foi cancelada.')
+            } else {
+                log('Solicitada abertura do transmissor externo.')
+            }
+
+        } catch (error) {
+            log(
+                'Falha ao abrir o transmissor: ' +
+                error.message
+            )
+
+            statusRTC.textContent =
+                'Não foi possível abrir o transmissor.'
+
+        } finally {
+            transmitButton.disabled = false
+        }
+    })
 
     window.addEventListener('pagehide', disconnect, { once: true })
 

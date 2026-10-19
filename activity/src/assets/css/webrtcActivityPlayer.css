@@ -28,15 +28,7 @@
     margin: 0;
     color: #aebbd0;
 }
-.demo-live-player #rtc-key{
-    grid-column:  1 / 7;
-}
-.demo-live-player #rtc-connect{
-    grid-column:  7 / 10;
-}
-.demo-live-player #rtc-disconnect{
-    grid-column:  10 / -1;
-}
+
 .demo-live-player #rtc-sound{
     background: #343d51;
     white-space: nowrap;
@@ -596,6 +588,69 @@
 .demo-live-player #rtc-player-state[data-state="connecting"]::before,
 .demo-live-player #rtc-player-state[data-state="reconnecting"]::before {
     animation: rtc-state-pulse 1.2s ease-in-out infinite;
+}
+
+
+.demo-live-player > .rtc-connect-controls {
+    grid-column: 1 / -1;
+    grid-row: 3;
+
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 140px;
+    align-items: start;
+
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    margin-bottom: 16px;
+}
+
+.rtc-connect-fields {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    min-width: 0;
+}
+
+.rtc-connect-fields #rtc-key {
+    flex: 1 1 180px;
+    min-width: 0;
+}
+
+.rtc-connect-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+}
+
+.rtc-connect-actions button {
+    display: block;
+    width: 100%;
+    min-width: 0;
+}
+
+@media (max-width: 560px) {
+    .demo-live-player > .rtc-connect-controls {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .rtc-connect-fields {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .rtc-connect-fields #rtc-key {
+        flex: none;
+        width: 100%;
+    }
+
+    .rtc-connect-actions {
+        width: 140px;
+        justify-self: end;
+    }
 }
 
 @media (prefers-reduced-motion: reduce) {
