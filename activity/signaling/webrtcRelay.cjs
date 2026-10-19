@@ -754,7 +754,16 @@ wss.on('connection', (ws) => {
         }
         return reject(ws)
     })
-    ws.on('close', () => {
+    ws.on('close', (code, reason) => {
+
+        console.log('[Relay] WebSocket fechado:', {
+            role: ws.role,
+            code,
+            reason: reason.toString() || 'Sem motivo',
+            streamId: ws.streamId,
+            viewerId: ws.viewerId
+        })
+
         clearTimeout(authTimeout)
 
         if(ws.role === 'viewer'){
@@ -792,6 +801,11 @@ wss.on('connection', (ws) => {
 const heartbeat = setInterval(() => {
     for(const ws of wss.clients){
         if(!ws.alive){
+            console.warn('[Relay] Encerrando WebSocket sem pong:', {
+                role: ws.role,
+                streamId: ws.streamId,
+                viewerId: ws.viewerId
+            })
             ws.terminate()
             continue
         }

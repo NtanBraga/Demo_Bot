@@ -1459,21 +1459,52 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
                     video.srcObject = remoteStream
                     video.muted = true
 
-                    await video.play()
-
                     const videoConsumer = session.consumers.get('video')
 
-                    const codec = videoConsumer
-                        ?.rtpParameters.codecs.find(item =>
-                            item.mimeType.toLowerCase().startsWith('video/') &&
-                            item.mimeType.toLowerCase() !== 'video/rtx'
-                        )
+                    const codec = videoConsumer?.rtpParameters.codecs.find(item =>
+                        item.mimeType.toLowerCase().startsWith('video/') &&
+                        item.mimeType.toLowerCase() !== 'video/rtx'
+                    )
 
                     codecCurrent.textContent =
                         'Codec recebido: ' +
                         (codec?.mimeType ?? 'desconhecido')
 
-                    log('Transmissao SFU iniciada pela Azure.')
+                    cancelSfuRetry()
+                    sfuRetryAttempts = 0
+
+                    session.startStats(stats => {
+                        if (sfuSession !== session) return
+
+                        if (stats.video) {
+                            stats.video.width ??= video.videoWidth || null
+                            stats.video.height ??= video.videoHeight || null
+                        }
+
+                        sfuStatsBox.textContent = formatSfuStats(stats)
+                    })
+
+                    setPlayerState('connected')
+                    updateButtons()
+
+                    video.play()
+                        .then(() => {
+                            if (
+                                sfuSession !== session ||
+                                selectedStreamId !== roomId
+                            ) return
+
+                            log('Transmissao SFU iniciada pela Azure.')
+                            setPlayerState('live')
+                        })
+                        .catch(error => {
+                            if (
+                                sfuSession !== session ||
+                                selectedStreamId !== roomId
+                            ) return
+
+                            log('Falha ao iniciar reprodução SFU: ' + error.message)
+                        })
 
                     cancelSfuRetry()
                     sfuRetryAttempts = 0

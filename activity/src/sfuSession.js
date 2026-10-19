@@ -25,7 +25,11 @@ export class SfuSession {
         this.consumers = new Map()
         this.closed = false
         this.statsTimer = null
+
         this.previousStats = new Map()
+        this.statsGeneration = 0
+
+        this.mediaQueue = Promise.resolve()
     }
 
     request(type, data = {}) {
@@ -56,6 +60,22 @@ export class SfuSession {
                 data
             }))
         })
+    }
+
+    enqueueMedia(action) {
+        const operation = this.mediaQueue
+            .catch(() => {})
+            .then(() => {
+                if (this.closed) {
+                    throw new Error('SFU encerrado')
+                }
+
+                return action()
+            })
+
+        this.mediaQueue = operation.catch(() => {})
+
+        return operation
     }
 
     async connect(token) {
@@ -239,52 +259,54 @@ export class SfuSession {
         }
     }
 
-    async publish(stream, preferredCodec = 'h264') {
-        if (this.role !== 'publisher' || !this.transport) {
-            throw new Error('SFU publisher nao preparado')
-        }
+    publish(stream, preferredCodec = 'h264') {
+        return this.enqueueMedia(async () => {
+            if (this.role !== 'publisher' || !this.transport) {
+                throw new Error('SFU publisher nao preparado')
+            }
 
-        const videoTrack = stream.getVideoTracks()[0]
+            const videoTrack = stream.getVideoTracks()[0]
 
-        if (!videoTrack) {
-            throw new Error('Captura sem video')
-        }
+            if (!videoTrack) {
+                throw new Error('Captura sem video')
+            }
 
-        const codec = this.device.sendRtpCapabilities.codecs.find(
-            c => c.mimeType.toLowerCase() ===
-                `video/${preferredCodec}`
-        )
-
-        if (!codec) {
-            throw new Error(
-                'Codec nao suportado: ' + preferredCodec
+            const codec = this.device.sendRtpCapabilities.codecs.find(
+                c => c.mimeType.toLowerCase() ===
+                    `video/${preferredCodec}`
             )
-        }
 
-        const video = await this.transport.produce({
-            track: videoTrack,
-            codec,
-            encodings: [
-                { maxBitrate: 8_000_000 }
-            ],
-            stopTracks: false
-        })
+            if (!codec) {
+                throw new Error(
+                    'Codec nao suportado: ' + preferredCodec
+                )
+            }
 
-        this.producers.set('video', video)
-
-        const audioTrack = stream.getAudioTracks()[0]
-
-        if (
-            audioTrack &&
-            this.device.canProduce('audio')
-        ) {
-            const audio = await this.transport.produce({
-                track: audioTrack,
+            const video = await this.transport.produce({
+                track: videoTrack,
+                codec,
+                encodings: [
+                    { maxBitrate: 8_000_000 }
+                ],
                 stopTracks: false
             })
 
-            this.producers.set('audio', audio)
-        }
+            this.producers.set('video', video)
+
+            const audioTrack = stream.getAudioTracks()[0]
+
+            if (
+                audioTrack &&
+                this.device.canProduce('audio')
+            ) {
+                const audio = await this.transport.produce({
+                    track: audioTrack,
+                    stopTracks: false
+                })
+
+                this.producers.set('audio', audio)
+            }
+        })
     }
 
     async watch() {
@@ -336,129 +358,189 @@ export class SfuSession {
         return stream
     }
 
-    async stopPublishing() {
-        if (this.role !== 'publisher') return
+    stopPublishing() {
+        return this.enqueueMedia(async () => {
+            if (this.role !== 'publisher') return
 
-        for (const producer of this.producers.values()) {
-            producer.close()
-        }
+            for (const producer of this.producers.values()) {
+                producer.close()
+            }
 
-        this.producers.clear()
+            this.producers.clear()
 
-        if (
-            this.socket?.readyState === WebSocket.OPEN &&
-            !this.closed
-        ) {
-            await this.request('stop')
-        }
+            if (
+                this.socket?.readyState === WebSocket.OPEN &&
+                !this.closed
+            ) {
+                await this.request('stop')
+            }
+        })
     }
 
+    
     startStats(callback) {
         this.stopStats()
-
         if (typeof callback !== 'function') return
 
-        const medir = (report, stats, now) => {
+        const generation = this.statsGeneration
+        const outbound = this.role === 'publisher'
+        let running = false
+
+        const getMediaStats = async kind => {
+            const media = (outbound ? this.producers : this.consumers).get(kind)
+
+            if (!media || media.closed) return null
+
+            const stats = await media.getStats()
+
+            if (media.closed) return null
+
+            return { media, stats }
+        }
+
+        const measure = (entry, kind) => {
+            if (!entry) return null
+
+            const { media, stats } = entry
+            const expectedSsrc = media.rtpParameters?.encodings?.[0]?.ssrc
+
+            const primaryCodec = media.rtpParameters?.codecs?.find(codec =>
+                codec.mimeType?.toLowerCase() !== 'video/rtx'
+            )
+
+            const type = outbound ? 'outbound-rtp' : 'inbound-rtp'
+
+            const reports = [...stats.values()].filter(report =>
+                report.type === type &&
+                ((!report.kind && !report.mediaType) ||
+                    (report.kind ?? report.mediaType) === kind)
+            )
+
+            const score = report => {
+                const mime = stats.get(report.codecId)?.mimeType?.toLowerCase()
+
+                return (
+                    (expectedSsrc != null &&
+                        String(report.ssrc) === String(expectedSsrc) ? 100 : 0) +
+                    (mime && mime === primaryCodec?.mimeType?.toLowerCase() ? 50 : 0) +
+                    (kind === 'video' &&
+                        Number.isFinite(
+                            outbound ? report.framesEncoded : report.framesDecoded
+                        ) ? 20 : 0) -
+                    (mime === 'video/rtx' ? 100 : 0)
+                )
+            }
+
+            reports.sort((a, b) => score(b) - score(a))
+
+            const report = reports[0]
             if (!report) return null
 
-            const previous = this.previousStats.get(report.id)
-            const codec = stats.get(report.codecId)?.mimeType ?? null
+            const key = `${kind}:${media.id}:${report.id}`
+            const previous = this.previousStats.get(key)
 
-            const outbound = this.role === 'publisher'
+            const time = Number.isFinite(report.timestamp)
+                ? report.timestamp
+                : performance.now()
 
-            const bytes = outbound
-                ? report.bytesSent
-                : report.bytesReceived
-
-            const frames = outbound
-                ? report.framesEncoded
-                : report.framesDecoded
+            const bytes = outbound ? report.bytesSent : report.bytesReceived
+            const frames = outbound ? report.framesEncoded : report.framesDecoded
+            const packets = outbound ? report.packetsSent : report.packetsReceived
+            const lost = report.packetsLost
 
             let bitrate = null
             let fps = null
+            let packetLossPercent = null
 
-            if (previous) {
-                const seconds = (now - previous.time) / 1000
+            if (previous && time > previous.time) {
+                const seconds = (time - previous.time) / 1000
 
-                if (seconds > 0) {
-                    if (
-                        Number.isFinite(bytes) &&
-                        Number.isFinite(previous.bytes)
-                    ) {
-                        bitrate = Math.max(
-                            0,
-                            (bytes - previous.bytes) * 8 / seconds
-                        )
-                    }
+                if (Number.isFinite(bytes) && Number.isFinite(previous.bytes)) {
+                    bitrate = Math.max(0, (bytes - previous.bytes) * 8 / seconds)
+                }
 
-                    if (
-                        Number.isFinite(frames) &&
-                        Number.isFinite(previous.frames)
-                    ) {
-                        fps = Math.max(
-                            0,
-                            (frames - previous.frames) / seconds
-                        )
+                if (Number.isFinite(frames) && Number.isFinite(previous.frames)) {
+                    fps = Math.max(0, (frames - previous.frames) / seconds)
+                }
+
+                if (
+                    !outbound &&
+                    Number.isFinite(packets) &&
+                    Number.isFinite(lost) &&
+                    Number.isFinite(previous.packets) &&
+                    Number.isFinite(previous.lost)
+                ) {
+                    const received = Math.max(0, packets - previous.packets)
+                    const lostNow = Math.max(0, lost - previous.lost)
+
+                    if (received + lostNow > 0) {
+                        packetLossPercent =
+                            lostNow * 100 / (received + lostNow)
                     }
                 }
             }
 
-            this.previousStats.set(report.id, {
-                time: now,
+            this.previousStats.set(key, {
+                time,
                 bytes,
-                frames
+                frames,
+                packets,
+                lost
             })
 
+            const settings = media.track?.getSettings?.()
+
             return {
-                codec,
+                codec: primaryCodec?.mimeType ??
+                    stats.get(report.codecId)?.mimeType ?? null,
+                width: report.frameWidth ?? settings?.width ?? null,
+                height: report.frameHeight ?? settings?.height ?? null,
                 bitrate,
                 fps: fps ?? report.framesPerSecond ?? null,
-                width: report.frameWidth ?? null,
-                height: report.frameHeight ?? null,
-                packetsLost: report.packetsLost ?? null,
-                framesDropped: report.framesDropped ?? null,
+                packetsLost: outbound ? null : lost ?? null,
+                packetLossPercent,
                 jitterMs: Number.isFinite(report.jitter)
                     ? report.jitter * 1000
                     : null,
-                encoder: report.encoderImplementation ?? null,
-                limitation: report.qualityLimitationReason ?? null
+                framesDropped: report.framesDropped ?? null,
+                encoder: outbound
+                    ? report.encoderImplementation ?? null
+                    : null,
+                limitation: outbound
+                    ? report.qualityLimitationReason ?? null
+                    : null
             }
         }
 
-        const atualizar = async () => {
+        const update = async () => {
             if (
+                running ||
                 this.closed ||
-                !this.transport ||
-                this.transport.closed ||
-                this.transport.connectionState !== 'connected'
+                generation !== this.statsGeneration ||
+                this.transport?.connectionState !== 'connected'
             ) return
 
+            running = true
+
             try {
-                const stats = await this.transport.getStats()
+                const [videoData, audioData, transportStats] = await Promise.all([
+                    getMediaStats('video').catch(() => null),
+                    getMediaStats('audio').catch(() => null),
+                    this.transport.getStats().catch(() => null)
+                ])
 
-                if (this.closed) return
+                if (this.closed || generation !== this.statsGeneration) return
 
-                const reports = [...stats.values()]
-
-                const type = this.role === 'publisher'
-                    ? 'outbound-rtp'
-                    : 'inbound-rtp'
-
-                const encontrar = kind => reports.find(report =>
-                    report.type === type &&
-                    (report.kind ?? report.mediaType) === kind &&
-                    stats.get(report.codecId)
-                        ?.mimeType?.toLowerCase() !== 'video/rtx'
-                )
-
-                const now = performance.now()
+                const reports = transportStats
+                    ? [...transportStats.values()]
+                    : []
 
                 const transportReport = reports.find(report =>
                     report.type === 'transport' &&
                     report.selectedCandidatePairId
                 )
 
-                const pair = stats.get(
+                const pair = transportStats?.get(
                     transportReport?.selectedCandidatePairId
                 ) ?? reports.find(report =>
                     report.type === 'candidate-pair' &&
@@ -466,15 +548,18 @@ export class SfuSession {
                     report.nominated
                 )
 
-                const source = reports.find(report =>
-                    report.type === 'media-source' &&
-                    (report.kind ?? report.mediaType) === 'video'
-                )
+                const source = outbound
+                    ? reports.find(report =>
+                        report.type === 'media-source' &&
+                        (report.kind ?? report.mediaType) === 'video'
+                    )
+                    : null
 
                 callback({
+                    role: this.role,
                     state: this.transport.connectionState,
-                    video: medir(encontrar('video'), stats, now),
-                    audio: medir(encontrar('audio'), stats, now),
+                    video: measure(videoData, 'video'),
+                    audio: measure(audioData, 'audio'),
                     rttMs: Number.isFinite(pair?.currentRoundTripTime)
                         ? pair.currentRoundTripTime * 1000
                         : null,
@@ -483,19 +568,21 @@ export class SfuSession {
 
             } catch (error) {
                 if (!this.closed) {
-                    console.warn(
-                        '[SFU] Estatísticas indisponíveis:',
-                        error.message
-                    )
+                    console.warn('[SFU] Estatísticas:', error)
                 }
+            } finally {
+                running = false
             }
         }
 
-        this.statsTimer = setInterval(atualizar, 3000)
-        atualizar()
+        this.statsTimer = setInterval(() => void update(), 3000)
+        void update()
     }
 
+
     stopStats() {
+        this.statsGeneration++
+
         if (this.statsTimer !== null) {
             clearInterval(this.statsTimer)
             this.statsTimer = null
@@ -532,34 +619,44 @@ export class SfuSession {
         this.socket?.close()
     }
 }
+
 export function formatSfuStats(data) {
     const number = (value, digits = 1) =>
+        Number.isFinite(value) ? value.toFixed(digits) : 'n/d'
+
+    const bitrate = (value, divisor, unit) =>
         Number.isFinite(value)
-            ? value.toFixed(digits)
+            ? `${(value / divisor).toFixed(2)} ${unit}`
             : 'n/d'
 
-    const bitrate = (value, unit) => {
-        const divisor = unit === 'Mbps' ? 1_000_000 : 1_000
-
-        return `${number(
-            Number.isFinite(value) ? value / divisor : null,
-            2
-        )} ${unit}`
-    }
-
-    return [
+    const lines = [
         `WebRTC: ${data.state}`,
         `Codec: ${data.video?.codec ?? 'n/d'}`,
         `Resolução: ${data.video?.width ?? '?'}x${data.video?.height ?? '?'}`,
         `FPS vídeo: ${number(data.video?.fps)}`,
-        `FPS capturados: ${number(data.capturedFps)}`,
-        `Bitrate vídeo: ${bitrate(data.video?.bitrate, 'Mbps')}`,
-        `Bitrate áudio: ${bitrate(data.audio?.bitrate, 'kbps')}`,
-        `RTT ICE: ${number(data.rttMs)} ms`,
-        `Pacotes perdidos: ${data.video?.packetsLost ?? 'n/d'}`,
-        `Jitter: ${number(data.video?.jitterMs)} ms`,
-        `Frames descartados: ${data.video?.framesDropped ?? 'n/d'}`,
-        `Encoder: ${data.video?.encoder ?? 'n/d'}`,
-        `Limitação: ${data.video?.limitation ?? 'n/d'}`
-    ].join('\n')
+        `Bitrate vídeo: ${bitrate(data.video?.bitrate, 1_000_000, 'Mbps')}`,
+        `Bitrate áudio: ${bitrate(data.audio?.bitrate, 1_000, 'kbps')}`,
+        `RTT ICE: ${number(data.rttMs)} ms`
+    ]
+
+    if (data.role === 'publisher') {
+        lines.push(
+            `FPS capturados: ${number(data.capturedFps)}`,
+            `Encoder: ${data.video?.encoder ?? 'n/d'}`,
+            `Limitação: ${data.video?.limitation ?? 'n/d'}`
+        )
+    } else {
+        lines.push(
+            `Pacotes perdidos (total): ${data.video?.packetsLost ?? 'n/d'}`,
+            `Perda no intervalo: ${
+                Number.isFinite(data.video?.packetLossPercent)
+                    ? number(data.video.packetLossPercent, 2) + '%'
+                    : 'n/d'
+            }`,
+            `Jitter: ${number(data.video?.jitterMs)} ms`,
+            `Frames descartados: ${data.video?.framesDropped ?? 'n/d'}`
+        )
+    }
+
+    return lines.join('\n')
 }
