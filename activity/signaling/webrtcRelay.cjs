@@ -69,6 +69,7 @@ function getStreamList(requester = null){
 
         return {
             id: stream.id,
+            mode: stream.mode,
             status: stream.status,
             registeredAt: stream.registeredAt,
             startedAt: stream.startedAt,
@@ -154,12 +155,14 @@ function watchStream(viewer, streamId){
         type: 'viewer:watching',
         streamId
     })
-    send(stream.publisher, {
-        type: 'viewer:joined',
-        viewerId: viewer.viewerId,
-        codecMode: viewer.codecMode,
-        codec: viewer.codec
-    })
+    if(stream.mode !== 'sfu'){
+        send(stream.publisher, {
+            type: 'viewer:joined',
+            viewerId: viewer.viewerId,
+            codecMode: viewer.codecMode,
+            codec: viewer.codec
+        })
+    }
 
     broadcastStreamList()
 
@@ -314,7 +317,7 @@ server.on('upgrade', (req, socket, head) => {
     })
 })
 
-wss.on('connection', ws => {
+wss.on('connection', (ws) => {
     ws.role = null
     ws.viewerId = null
     ws.alive = true
@@ -367,7 +370,15 @@ wss.on('connection', ws => {
                     return reject(ws, 'Limite de transmissores atingido.')
                 }
 
+                if (
+                    msg.mode != null &&
+                    !['p2p', 'sfu'].includes(msg.mode)
+                ) {
+                    return reject(ws, 'Modo de transmissão inválido.')
+                }
+
                 ws.role = 'publisher'
+                ws.mode = msg.mode === 'sfu' ? 'sfu' : 'p2p'
 
                 const streamId = crypto.randomUUID()
 
@@ -377,6 +388,7 @@ wss.on('connection', ws => {
 
                 streams.set(streamId, {
                     id: streamId,
+                    mode: ws.mode,
                     publisher: ws,
                     status: 'idle',
                     registeredAt: new Date().toISOString(),
@@ -487,6 +499,40 @@ wss.on('connection', ws => {
 
         if(ws.role === 'publisher'){
 
+            if (msg.type === 'publisher:sfu-grant') {
+                const stream = streams.get(ws.streamId)
+
+                if (ws.mode !== 'sfu' || !stream || stream.publisher !== ws) {
+                    return reject(ws, 'Publicação SFU não autorizada.')
+                }
+
+                try {
+                    const token = criarCredencialSFU({
+                        roomId: ws.streamId,
+                        role: 'publisher',
+                        userId: '000000000000000000'
+                    })
+
+                    send(ws, {
+                        type: 'publisher:sfu-grant',
+                        ok: true,
+                        streamId: ws.streamId,
+                        token
+                    })
+
+                } catch (error) {
+                    console.error('[SFU] Falha ao emitir credencial de publisher:', error.message)
+
+                    send(ws, {
+                        type: 'publisher:sfu-grant',
+                        ok: false,
+                        error: 'Credencial SFU indisponível'
+                    })
+                }
+
+                return
+            }
+
             if(msg.type === 'publisher:started'){
                 const stream = streams.get(ws.streamId)
 
@@ -579,6 +625,7 @@ wss.on('connection', ws => {
                     typeof msg.streamId !== 'string' ||
                     msg.streamId !== roomId ||
                     !stream ||
+                    stream.mode !== 'sfu' ||
                     stream.publisher?.readyState !== WebSocket.OPEN
                 ) {
                     send(ws, {

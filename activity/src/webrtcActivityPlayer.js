@@ -1,4 +1,5 @@
 import './assets/css/webrtcActivityPlayer.css'
+import { SfuSession } from './sfuSession.js'
 
 export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
     if(!container) throw new Error('Container do WebRTC não encontrado.')
@@ -146,6 +147,9 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
     const CODEC_STORAGE_KEY = 'demo_live:codec-preferences:v1'
 
     const SUPPORTED_CODECS = ['h264', 'av1', 'vp8']
+
+    let sfuSession = null
+    let sfuGrantRequested = false
 
     const DEFAULT_CODEC_PREFERENCES = {
         automatic: true,
@@ -735,13 +739,18 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
     video.addEventListener('playing', () => {
         playerPanel.classList.add('is-playing')
 
-        if(connection?.connectionState === 'connected'){
+        if(connection?.connectionState === 'connected' ||
+            sfuSession?.transport?.connectionState === 'connected')
+        {
             setPlayerState('live')
         }
     })
     video.addEventListener('pause', () => {
         playerPanel.classList.remove('is-playing')
-        if(connection?.connectionState === 'connected'){
+
+        if(connection?.connectionState === 'connected' ||
+            sfuSession?.transport?.connectionState === 'connected')
+        {
             setPlayerState('connected')
         }
     })
@@ -755,7 +764,43 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
         return true;
     }
 
+    function solicitarSFUSeNecessario() {
+        if (
+            !authenticated ||
+            !selectedStreamId ||
+            sfuSession ||
+            sfuGrantRequested
+        ) return
+
+        const stream = latestStreams.find(
+            item => item.id === selectedStreamId
+        )
+
+        if (
+            stream?.mode !== 'sfu' ||
+            stream.status !== 'live'
+        ) return
+
+        sfuGrantRequested = true
+
+        if (!send({
+            type: 'viewer:sfu-grant',
+            streamId: selectedStreamId
+        })) {
+            sfuGrantRequested = false
+        }
+    }
+
     function closePeer(){
+
+        sfuGrantRequested = false
+
+        const oldSfuSession = sfuSession
+        sfuSession = null
+
+        oldSfuSession?.close()
+
+
         stopAutoCodecWatch()
 
         const oldConnection = connection
@@ -1182,8 +1227,116 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
                 updateButtons()
                 renderStreamList()
                 break
+            case 'viewer:sfu-grant': {
+                if (!sfuGrantRequested) break
+
+                sfuGrantRequested = false
+
+                if (!message.ok) {
+                    log('SFU: ' + message.error)
+                    setPlayerState('failed')
+                    break
+                }
+
+                const roomId = message.streamId
+
+                if (roomId !== selectedStreamId) break
+
+                const url = new URL(`wss://${clientId}.discordsays.com/.proxy/ws-sfu`)
+
+                url.searchParams.set('role', 'viewer')
+                url.searchParams.set('room', roomId)
+
+                const session = new SfuSession({
+                    role: 'viewer',
+                    roomId,
+                    url: url.toString(),
+
+                    onEvent: event => {
+                        if (event.event === 'producer-closed') {
+                            log(`SFU: Producer ${event.kind} encerrado.`)
+                        }
+                    },
+
+                    onClose: () => {
+                        if (sfuSession !== session) return
+
+                        sfuSession = null
+                        closePeer()
+
+                        setPlayerState('reconnecting')
+                        log('Conexao SFU interrompida.')
+                    }
+                })
+
+                sfuSession = session
+
+                try {
+                    setPlayerState('connecting')
+
+                    await session.connect(message.token)
+                    const media = await session.watch()
+
+                    if (
+                        sfuSession !== session ||
+                        selectedStreamId !== roomId
+                    ) {
+                        session.close()
+                        break
+                    }
+
+                    remoteStream = media
+
+                    video.srcObject = remoteStream
+                    video.muted = true
+
+                    await video.play()
+
+                    const videoConsumer = session.consumers.get('video')
+
+                    const codec = videoConsumer
+                        ?.rtpParameters.codecs.find(item =>
+                            item.mimeType.toLowerCase().startsWith('video/') &&
+                            item.mimeType.toLowerCase() !== 'video/rtx'
+                        )
+
+                    codecCurrent.textContent =
+                        'Codec recebido: ' +
+                        (codec?.mimeType ?? 'desconhecido')
+
+                    log('Transmissao SFU iniciada pela Azure.')
+
+                    setPlayerState('live')
+                    updateButtons()
+
+                } catch (error) {
+                    log('Erro SFU: ' + error.message)
+
+                    if (sfuSession === session) {
+                        closePeer()
+                        setPlayerState('failed')
+                    }
+                }
+
+                break
+            }
             case 'streams:snapshot':
                 renderStreamList(message.streams)
+
+                const selected = latestStreams.find(stream => stream.id === selectedStreamId)
+
+                if (selected?.mode === 'sfu' && selected.status === 'idle') {
+                    sfuGrantRequested = false
+
+                    if (sfuSession) {
+                        closePeer()
+                    }
+
+                    setPlayerState('waiting')
+                }
+
+                solicitarSFUSeNecessario()
+
                 break
             case 'viewer:watching': 
                 if(typeof message.streamId !== 'string') break
@@ -1214,7 +1367,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord){
                         streamId: selectedStreamId
                     })
                 }
-
+                solicitarSFUSeNecessario()
 
                 break
             case 'viewer:sfu-grant':

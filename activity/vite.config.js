@@ -15,6 +15,11 @@ export default defineConfig(({mode}) => {
                     ws: true,
                     changeOrigin: false
                 },
+                "/ws-sfu": {
+                    target: "ws://127.0.0.1:3004",
+                    ws: true,
+                    changeOrigin: false
+                },
                 "/ws-mse": {
                     target: "ws://127.0.0.1:3002",
                     ws: true,

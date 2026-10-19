@@ -418,6 +418,15 @@ connectButton.addEventListener('click', async () => {
         wsUrl.searchParams.set('role', role)
         wsUrl.searchParams.set('room', roomId)
 
+        let viewerGrant = null
+
+        if (role === 'viewer') {
+            viewerGrant = window.prompt('Cole a credencial temporaria SFU:')?.trim()
+
+            if (!viewerGrant) throw new Error('Credencial SFU nao informada')
+            
+        }
+
         socket = new WebSocket(wsUrl.toString())
 
         socket.addEventListener('message', handleMessage)
@@ -445,6 +454,17 @@ connectButton.addEventListener('click', async () => {
         })
 
         device = new Device()
+
+        if (role === 'viewer') {
+            await request('authenticate', {
+                token: viewerGrant
+            })
+
+            viewerGrant = null
+
+            log('Credencial SFU aceita pelo servidor.')
+        }
+
 
         await device.load({
             routerRtpCapabilities: await request('capabilities')

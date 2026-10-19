@@ -1,3 +1,5 @@
+import { SfuSession } from './sfuSession.js'
+
 const keyInput = document.querySelector('#publisher-key');
 const connectButton = document.querySelector('#connect-webrtc');
 const startButton = document.querySelector('#start-webrtc');
@@ -12,6 +14,11 @@ let authenticated = false;
 let captureStream = null;
 let capturing = false;
 let iceServers = [];
+
+const USE_SFU = true
+
+let sfuSession = null
+let sfuReady = false
 
 const viewers = new Set();
 const peers = new Map();
@@ -44,7 +51,7 @@ function normalizeCodecPreference(codecMode, codec){
 function updateButtons(){
     connectButton.disabled = socket !== null
 
-    startButton.disabled = !authenticated || captureStream !== null || capturing
+    startButton.disabled = !authenticated || (USE_SFU && !sfuReady) || captureStream !== null || capturing
     stopButton.disabled = captureStream === null
     audioMode.disabled = captureStream !== null || capturing
 }
@@ -80,6 +87,12 @@ function stopCapture(){
     const stream = captureStream
 
     captureStream = null
+
+    if (USE_SFU && sfuSession) {
+        sfuSession.stopPublishing().catch(error => {
+            log('Falha ao parar SFU: ' + error.message)
+        })
+    }
 
     if(stream && authenticated){
         send({
@@ -387,6 +400,12 @@ async function handleMessage(message){
         case 'publisher:ready':
             authenticated = true
 
+            if (USE_SFU) {
+                send({
+                    type: 'publisher:sfu-grant'
+                })
+            }
+
             iceServers = Array.isArray(message.iceServers) ? message.iceServers : []
 
             statusRTC.textContent = 'Sinalização WebRTC autenticada.'
@@ -402,6 +421,73 @@ async function handleMessage(message){
             })
 
             break
+        case 'publisher:sfu-grant': {
+            if (!USE_SFU) break
+
+            if (!message.ok) {
+                log('Autorizacao SFU: ' + message.error)
+                break
+            }
+
+            const roomId = message.streamId
+
+            const url = new URL('/ws-sfu', location.href)
+
+            url.protocol = location.protocol === 'https:'
+                ? 'wss:'
+                : 'ws:'
+
+            url.searchParams.set('role', 'publisher')
+            url.searchParams.set('room', roomId)
+
+            sfuSession?.close()
+            sfuReady = false
+
+            const session = new SfuSession({
+                role: 'publisher',
+                roomId,
+                url: url.toString(),
+
+                onClose: () => {
+                    if (sfuSession !== session) return
+
+                    sfuSession = null
+                    sfuReady = false
+
+                    log('Conexao com a Azure encerrada.')
+                    stopCapture()
+                    updateButtons()
+                }
+            })
+
+            sfuSession = session
+
+            try {
+                await session.connect(message.token)
+
+                if (sfuSession !== session) break
+
+                sfuReady = true
+
+                log('Publisher conectado ao mediasoup na Azure.')
+                statusRTC.textContent = 'SFU conectado. Pronto para compartilhar.'
+
+                updateButtons()
+
+            } catch (error) {
+                if (sfuSession === session) {
+                    sfuSession = null
+                    sfuReady = false
+                }
+
+                session.close()
+
+                log('Falha ao conectar SFU: ' + error.message)
+                updateButtons()
+            }
+
+            break
+        }
         case 'streams:snapshot': {
             const streams = Array.isArray(message.streams)
                 ? message.streams
@@ -553,7 +639,8 @@ function connect(){
 
         ws.send(JSON.stringify({
             type: 'publisher:join',
-            token
+            token,
+            mode: USE_SFU ? 'sfu' : 'p2p'
         }))
 
         token = ''
@@ -586,6 +673,10 @@ function connect(){
         viewerCodecPreferences.clear()
 
         stopCapture()
+
+        sfuSession?.close()
+        sfuSession = null
+        sfuReady = false
 
         statusRTC.textContent = `Sinalização desconectada (${event.code}).`
 
@@ -664,6 +755,16 @@ async function startCapture(){
             log('O navegador não forneceu audio.' + 'Verifique a opção de compartilhar audio.')
         }
 
+        if (USE_SFU) {
+            if (!sfuReady || !sfuSession) {
+                throw new Error('SFU ainda nao conectado')
+            }
+
+            await sfuSession.publish(stream, 'h264')
+
+            log('Video e audio publicados no mediasoup.')
+        }
+
         statusRTC.textContent = 'Capturando. Aguardando espectadores WebRTC...'
 
         updateButtons()
@@ -678,7 +779,9 @@ async function startCapture(){
             type: 'streams:list'
         })
 
-        await Promise.all([...viewers].map(openPeer))
+        if (!USE_SFU) {
+            await Promise.all([...viewers].map(openPeer))
+        }
     }catch(e){
         log(`Erro na captura: ${e.name || 'Error'} - ` + e.message)
         stopCapture()
@@ -697,7 +800,7 @@ stopButton.addEventListener('click', () => {
 
 window.addEventListener('pagehide', () => {
     stopCapture()
-
+    sfuSession?.close()
     socket?.close(1000, 'Pagina encerrada.')
 })
 updateButtons()
