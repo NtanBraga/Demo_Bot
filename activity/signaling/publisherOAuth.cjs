@@ -2,13 +2,71 @@
 'use strict'
 
 const crypto = require('node:crypto')
+const path = require('node:path')
+const { DatabaseSync } = require('node:sqlite')
 
 const PENDING_TTL_MS = 5 * 60_000
-const SESSION_TTL_MS = 12 * 60 * 60_000
+
+const SESSION_TTL_MS = 30 * 24 * 60 * 60_000
 
 const pending = new Map()
-const sessions = new Map()
 
+const database = new DatabaseSync(
+    path.join(__dirname, 'publisher-sessions.sqlite')
+)
+
+database.exec(`
+    CREATE TABLE IF NOT EXISTS publisher_sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        global_name TEXT,
+        avatar TEXT,
+        expires_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS publisher_sessions_expiration
+    ON publisher_sessions(expires_at);
+`)
+
+const findSession = database.prepare(`
+    SELECT *
+    FROM publisher_sessions
+    WHERE token_hash = ?
+`)
+
+const insertSession = database.prepare(`
+    INSERT INTO publisher_sessions (
+        token_hash,
+        user_id,
+        username,
+        global_name,
+        avatar,
+        expires_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+`)
+
+const deleteSession = database.prepare(`
+    DELETE FROM publisher_sessions
+    WHERE token_hash = ?
+`)
+
+const deleteExpiredSessions = database.prepare(`
+    DELETE FROM publisher_sessions
+    WHERE expires_at <= ?
+`)
+
+const countSessions = database.prepare(`
+    SELECT COUNT(*) AS total
+    FROM publisher_sessions
+`)
+
+function hashSessionToken(token) {
+    return crypto.createHash('sha256')
+        .update(token)
+        .digest('hex')
+}
 const STATE_COOKIE = 'demo_pub_state'
 const SESSION_COOKIE = '__Host-demo_publisher'
 
@@ -33,16 +91,29 @@ function json(res, status, data) {
 
 function getPublisherSession(req) {
     const token = getCookie(req, SESSION_COOKIE)
-    const session = token ? sessions.get(token) : null
+
+    if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null
+    
+    const tokenHash = hashSessionToken(token)
+
+    const session = findSession.get(tokenHash)
 
     if (!session) return null
 
-    if (Date.now() >= session.expiresAt) {
-        sessions.delete(token)
+    if (Date.now() >= session.expires_at) {
+        deleteSession.run(tokenHash)
         return null
     }
 
-    return session
+    return {
+        user: {
+            id: session.user_id,
+            username: session.username,
+            global_name: session.global_name,
+            avatar: session.avatar
+        },
+        expiresAt: session.expires_at
+    }
 }
 
 async function tratarPublisherOAuth(req, res) {
@@ -227,31 +298,31 @@ async function tratarPublisherOAuth(req, res) {
                 })
             }
 
-            if (sessions.size >= 200) {
+            deleteExpiredSessions.run(Date.now())
+
+            if (countSessions.get().total >= 200) {
                 return json(res, 503, {
                     error: 'too_many_sessions'
                 })
             }
 
-            const sessionToken = crypto.randomBytes(32)
-                .toString('base64url')
+            const sessionToken = crypto.randomBytes(32).toString('base64url')
 
-            sessions.set(sessionToken, {
-                user: {
-                    id: identity.user.id,
-                    username: identity.user.username,
-                    global_name:
-                        identity.user.global_name ?? null,
-                    avatar: identity.user.avatar ?? null
-                },
-                expiresAt: Date.now() + SESSION_TTL_MS
-            })
+            const user = {
+                id: identity.user.id,
+                username: identity.user.username,
+                global_name: identity.user.global_name ?? null,
+                avatar: identity.user.avatar ?? null
+            }
 
-            const timer = setTimeout(() => {
-                sessions.delete(sessionToken)
-            }, SESSION_TTL_MS)
-
-            timer.unref()
+            insertSession.run(
+                hashSessionToken(sessionToken),
+                user.id,
+                user.username,
+                user.global_name,
+                user.avatar,
+                Date.now() + SESSION_TTL_MS
+            )
 
             res.writeHead(302, {
                 Location: '/transmitirWebRTC.html',
@@ -261,7 +332,7 @@ async function tratarPublisherOAuth(req, res) {
                     'Max-Age=0; HttpOnly; Secure; SameSite=Lax',
 
                     `${SESSION_COOKIE}=${sessionToken}; ` +
-                    'Path=/; Max-Age=43200; ' +
+                    `Path=/; Max-Age=${SESSION_TTL_MS / 1000}; ` +
                     'HttpOnly; Secure; SameSite=Lax'
                 ],
                 'Cache-Control': 'no-store',

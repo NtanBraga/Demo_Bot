@@ -455,7 +455,12 @@ wss.on('connection', (ws, req) => {
                 return
             }
 
-            if(msg.type === 'viewer:join' && equalToken(msg.token, VIEW_TOKEN)){
+            if (msg.type === 'viewer:join') {
+
+                const validLegacyToken = equalToken(
+                    msg.token,
+                    VIEW_TOKEN
+                )
 
                 let verifiedDiscordUser = null
 
@@ -474,6 +479,14 @@ wss.on('connection', (ws, req) => {
                         return reject(ws, 'Ticket de identidade expirado ou utilizado.')
                     }
                 }
+
+                if (!validLegacyToken && !verifiedDiscordUser) {
+                    return reject(
+                        ws,
+                        'Visualização não autorizada. Autentique-se pelo Discord.'
+                    )
+                }
+
                 ws.discordUser = verifiedDiscordUser
 
 

@@ -14,17 +14,14 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         <h3>Central Player de Transmissões</h3>
 
         <p id="rtc-status">
-            Informe a chave para assistir.
+            Conecte-se para visualizar as transmissões.
         </p>
 
         <div class="rtc-connect-controls">
             <div class="rtc-connect-fields">
-                <input
-                    id="rtc-key"
-                    type="password"
-                    placeholder="Chave de visualização"
-                    autocomplete="off"
-                >
+                <button id="rtc-transmit" type="button">
+                    Transmitir
+                </button>
 
                 <button id="rtc-connect" type="button">
                     Conectar ao catálogo
@@ -32,10 +29,6 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
             </div>
 
             <div class="rtc-connect-actions">
-                <button id="rtc-transmit" type="button">
-                    Transmitir
-                </button>
-
                 <button id="rtc-disconnect" type="button" disabled>
                     Desconectar
                 </button>
@@ -130,7 +123,6 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     container.appendChild(section);
 
     const statusRTC = section.querySelector('#rtc-status');
-    const keyInput = section.querySelector('#rtc-key');
 
     const connectButton = section.querySelector('#rtc-connect');
     const disconnectButton = section.querySelector('#rtc-disconnect');
@@ -188,9 +180,6 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     let authenticated = false;
     let connectingSocket = false
     let connectGeneration = 0
-
-    let cachedViewerToken = null
-    let authenticatingViewerToken = null
 
     let selectedStreamId = null
     let activeNegotiationId = null
@@ -963,15 +952,12 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
         if (manual === true || manual?.type) {
             autoReconnectRelay = false
-            cachedViewerToken = null
 
             clearTimeout(relayRetryTimer)
             relayRetryTimer = null
         }
 
         const oldSocket = socket;
-
-        authenticatingViewerToken = null
 
         socket = null;
         authenticated = false;
@@ -1351,9 +1337,6 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                 }
 
 
-                cachedViewerToken = authenticatingViewerToken
-                authenticatingViewerToken = null
-
                 iceServers = Array.isArray(message.iceServers) ? message.iceServers : []
 
                 statusRTC.textContent = 'Autenticado. Aguardando transmissão.'
@@ -1628,10 +1611,6 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                 break
             case 'error':
 
-                if(!authenticated){
-                    cachedViewerToken = null
-                    authenticatingViewerToken = null
-                }
 
                 statusRTC.textContent = 'Erro de sinalização.'
 
@@ -1647,50 +1626,54 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         }
     }
 
-    async function connect(){
-        if(socket || connectingSocket) return
+    
+    async function connect() {
+        if (socket || connectingSocket) return
 
         const generation = ++connectGeneration
 
         resetAutoCodecOrder()
-
-        let token = keyInput.value.trim() || cachedViewerToken
-
-        if(!token){
-            statusRTC.textContent = 'Informe a chave de visualização.'
-            return
-        }
-
-        
-        authenticatingViewerToken = token
 
         connectingSocket = true
         updateButtons()
 
         let identityTicket
 
-        try{
-            if (typeof obterTicketDiscord !== 'function'){
-                throw new Error('Autenticação Discord indisponivel.')
+        try {
+            if (typeof obterTicketDiscord !== 'function') {
+                throw new Error('Autenticação Discord indisponível.')
             }
-            identityTicket = await obterTicketDiscord()
-        }catch(e){
-            statusRTC.textContent = 'Falha na identificação Discord.'
 
-            log(`Identidade Discord: ${e.message}`)
+            identityTicket = await obterTicketDiscord()
+
+            if (
+                typeof identityTicket !== 'string' ||
+                identityTicket.length === 0
+            ) {
+                throw new Error('Ticket Discord não retornado.')
+            }
+
+        } catch (error) {
+            statusRTC.textContent =
+                'Falha na identificação Discord.'
+
+            log(`Identidade Discord: ${error.message}`)
+
             if (autoReconnectRelay) {
                 queueMicrotask(scheduleRelayRetry)
-            }   
+            }
 
             return
-        }finally{
+
+        } finally {
             connectingSocket = false
             updateButtons()
         }
 
         if (generation !== connectGeneration) return
 
-        const url = `wss://${clientId}.discordsays.com/.proxy/ws-webrtc`
+        const url =
+            `wss://${clientId}.discordsays.com/.proxy/ws-webrtc`
 
         const ws = new WebSocket(url)
 
@@ -1701,31 +1684,32 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         updateButtons()
 
         ws.addEventListener('open', () => {
-            if(socket !== ws) return
+            if (socket !== ws) return
 
             ws.send(JSON.stringify({
                 type: 'viewer:join',
-                token,
                 identityTicket,
                 autoWatch: false,
                 ...getCodecRequest()
             }))
 
-            token = ''
-            keyInput.value = ''
+            identityTicket = null
 
             statusRTC.textContent = 'Autenticando...'
         })
 
         ws.addEventListener('message', event => {
-            if(socket !== ws || typeof event.data !== 'string') return
+            if (
+                socket !== ws ||
+                typeof event.data !== 'string'
+            ) return
 
             let message
 
-            try{
+            try {
                 message = JSON.parse(event.data)
-            }catch{
-                log('Message invalida recebida.')
+            } catch {
+                log('Mensagem inválida recebida.')
                 return
             }
 
@@ -1735,7 +1719,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         })
 
         ws.addEventListener('close', event => {
-            if(socket !== ws) return
+            if (socket !== ws) return
 
             log(`WebSocket fechado: ${event.code}`)
 
@@ -1752,6 +1736,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
             log('Erro na conexão WebSocket.')
         })
     }
+
 
     soundButton.addEventListener('click', async () => {
         video.muted = !video.muted

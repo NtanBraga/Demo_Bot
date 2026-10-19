@@ -606,6 +606,11 @@
     margin-bottom: 16px;
 }
 
+.demo-live-player .rtc-connect-fields > button {
+    flex: 1 1 180px;
+    min-width: 0;
+}
+
 .rtc-connect-fields {
     display: flex;
     align-items: center;

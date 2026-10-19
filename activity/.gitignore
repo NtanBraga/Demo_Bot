@@ -22,3 +22,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+signaling/publisher-sessions.sqlite
+signaling/publisher-sessions.sqlite-*
+
+
+node_modules
+.env.local
+!package-lock.json
+.env.webrtc

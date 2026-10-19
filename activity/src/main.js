@@ -2,7 +2,6 @@ import './assets/css/style.css'
 import { DiscordSDK } from "@discord/embedded-app-sdk"
 import { montarPlayerWebRTC } from './webrtcActivityPlayer'
 import { montarParticipantesDiscord } from './discordParticipants'
-import { montarTesteCaptura } from './activityCaptureTest'
 
 const CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID
 
@@ -143,7 +142,6 @@ async function iniciarActivity(){
     discordAuthPromise = autenticarUsuario(discordSDK)
 
     montarPlayerWebRTC(container, CLIENT_ID, obterTicketDiscord,discordSDK)
-    montarTesteCaptura(container)
 
     try{
       discordAccessToken = await discordAuthPromise
