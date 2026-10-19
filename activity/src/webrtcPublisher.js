@@ -25,6 +25,9 @@ let sfuReady = false
 let cachedPublisherToken = null
 let pendingPublisherToken = null
 
+let discordLoggedIn = false
+let publisherAuthenticatedByDiscord = false
+
 let sfuGrantPending = false
 let sfuGrantTimeout = null
 let sfuRetryTimer = null
@@ -108,9 +111,9 @@ async function verificarLoginDiscord() {
         const data = await response.json()
 
         if (data.authenticated && data.user) {
-            const name =
-                data.user.global_name ||
-                data.user.username
+            discordLoggedIn = true
+
+            const name = data.user.global_name || data.user.username
 
             discordStatus.textContent = `Discord autenticado: ${name}`
 
@@ -119,7 +122,7 @@ async function verificarLoginDiscord() {
             log('Identidade Discord do publisher verificada.')
         } else {
             discordStatus.textContent = 'Discord: não autenticado.'
-
+            discordLoggedIn = false
             discordLoginButton.hidden = false
         }
 
@@ -245,7 +248,7 @@ function schedulePublisherSfuRetry() {
 function schedulePublisherRelayRetry() {
     if (
         closingPage ||
-        !cachedPublisherToken ||
+        (!cachedPublisherToken && !publisherAuthenticatedByDiscord) ||
         socket ||
         relayRetryTimer
     ) return
@@ -600,8 +603,22 @@ async function handleMessage(message){
     switch(message.type){
         case 'publisher:ready':
             authenticated = true
-            cachedPublisherToken = pendingPublisherToken
+
+            publisherAuthenticatedByDiscord =
+                message.authMethod === 'discord'
+
+            cachedPublisherToken = publisherAuthenticatedByDiscord
+                ? null
+                : pendingPublisherToken
+
             pendingPublisherToken = null
+
+            log(
+                'Método de autenticação: ' +
+                (publisherAuthenticatedByDiscord
+                    ? 'Discord OAuth2'
+                    : 'Chave de transmissor')
+            )
 
             relayRetryAttempts = 0
             sfuRetryAttempts = 0
@@ -867,6 +884,14 @@ async function handleMessage(message){
             break
         }
         case 'error':
+            if (
+                !authenticated &&
+                message.message?.includes('Publicação não autorizada')
+            ) {
+                publisherAuthenticatedByDiscord = false
+                cachedPublisherToken = null
+                pendingPublisherToken = null
+            }
             log(`Servidor: ${message.message || 'Erro desconhecido.'}`)
             statusRTC.textContent = 'Erro de sinalização.'
             break
@@ -878,10 +903,10 @@ async function handleMessage(message){
 function connect(){
     if(socket) return
 
-    let token = keyInput.value.trim() || cachedPublisherToken
+    let token = keyInput.value.trim() || cachedPublisherToken || ''
 
-    if(!token){
-        statusRTC.textContent = 'Infome a chave de transmissor.'
+    if (!token && !discordLoggedIn && !publisherAuthenticatedByDiscord) {
+        statusRTC.textContent = 'Entre com Discord ou informe a chave de transmissor.'
         return
     }
     pendingPublisherToken = token
@@ -952,7 +977,7 @@ function connect(){
         clearTimeout(sfuRetryTimer)
         sfuRetryTimer = null
 
-        if (!USE_SFU || closingPage || !cachedPublisherToken) {
+        if (!USE_SFU || closingPage || (!cachedPublisherToken && !publisherAuthenticatedByDiscord)) {
             stopCapture()
 
             statusRTC.textContent = `Sinalização desconectada (${event.code}).`

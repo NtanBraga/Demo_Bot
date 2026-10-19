@@ -6,7 +6,7 @@ const { WebSocketServer, WebSocket } = require('ws')
 const { tratarTokenDiscord } = require('./discordSOAuth.cjs')
 const { tratarIdentidadeDiscord, consumirTicketIdentidade } = require('./discordIdentity.cjs')
 const { criarCredencialSFU } = require('./sfuAccess.cjs')
-const { tratarPublisherOAuth } = require('./publisherOAuth.cjs')
+const { tratarPublisherOAuth, getPublisherSession } = require('./publisherOAuth.cjs')
 
 const PORT = Number(process.env.WEBRTC_PORT || 3003)
 const PUBLISH_TOKEN = process.env.WEBRTC_PUBLISH_TOKEN
@@ -322,11 +322,11 @@ server.on('upgrade', (req, socket, head) => {
         return
     }
     wss.handleUpgrade(req, socket, head, ws => {
-        wss.emit('connection', ws)
-    })
+    wss.emit('connection', ws, req)
+})
 })
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
     ws.role = null
     ws.viewerId = null
     ws.alive = true
@@ -374,7 +374,33 @@ wss.on('connection', (ws) => {
         }
 
         if(!ws.role){
-            if(msg.type === 'publisher:join' && equalToken(msg.token, PUBLISH_TOKEN)){
+            if (msg.type === 'publisher:join') {
+                const session = getPublisherSession(req)
+
+                const validLegacyToken = equalToken(
+                    msg.token,
+                    PUBLISH_TOKEN
+                )
+
+                const validDiscordLogin = Boolean(
+                    session?.user?.id
+                )
+
+                if (!validLegacyToken && !validDiscordLogin) {
+                    return reject(
+                        ws,
+                        'Publicação não autorizada. Entre com uma conta Discord autorizada ou utilize uma chave válida.'
+                    )
+                }
+
+                ws.discordUser = validDiscordLogin
+                    ? session.user
+                    : null
+
+                ws.publisherAuthMethod = validLegacyToken
+                    ? 'token'
+                    : 'discord'
+
                 if(publishers.size >= MAX_PUBLISHERS){
                     return reject(ws, 'Limite de transmissores atingido.')
                 }
@@ -411,7 +437,8 @@ wss.on('connection', (ws) => {
                 send(ws, {
                     type: 'publisher:ready',
                     streamId,
-                    iceServers: iceServers()
+                    iceServers: iceServers(),
+                    authMethod: ws.publisherAuthMethod
                 })
 
                 if(publishers.size === 1){

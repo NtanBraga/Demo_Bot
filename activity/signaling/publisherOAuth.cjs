@@ -72,12 +72,6 @@ async function tratarPublisherOAuth(req, res) {
     const clientSecret = process.env.DISCORD_CLIENT_SECRET
     const redirectUri = process.env.PUBLISHER_OAUTH_REDIRECT_URI
 
-    console.log('[Publisher OAuth] Configuração:', {
-        clientId: Boolean(clientId),
-        clientSecret: Boolean(clientSecret),
-        redirectUri: redirectUri || 'NÃO CONFIGURADO'
-    })
-
     if (
         !clientId ||
         !clientSecret ||
