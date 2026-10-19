@@ -138,10 +138,13 @@ async function iniciarActivity(){
 
     const container = document.querySelector("#app main")
     const participantsContainer = document.querySelector('#discord-participants')
+
+    discordAuthPromise = autenticarUsuario(discordSDK)
+
     montarPlayerWebRTC(container, CLIENT_ID, obterTicketDiscord)
 
     try{
-      discordAccessToken = await autenticarUsuario(discordSDK)
+      discordAccessToken = await discordAuthPromise
 
       discordStatus.dataset.state = 'connected'
       discordStatus.textContent = "Discord conectado."

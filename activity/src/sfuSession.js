@@ -24,6 +24,8 @@ export class SfuSession {
         this.producers = new Map()
         this.consumers = new Map()
         this.closed = false
+        this.statsTimer = null
+        this.previousStats = new Map()
     }
 
     request(type, data = {}) {
@@ -103,7 +105,11 @@ export class SfuSession {
             if (this.closed) return
 
             this.close()
-            this.onClose()
+
+            this.onClose({
+                code: event.code,
+                reason: event.reason || 'WebSocket encerrado'
+            })
         })
 
         try {
@@ -185,6 +191,20 @@ export class SfuSession {
             this.transport = this.role === 'publisher'
                 ? this.device.createSendTransport(params)
                 : this.device.createRecvTransport(params)
+
+            this.transport.on('connectionstatechange', state => {
+                this.onEvent({
+                    event: 'transport-state',
+                    state
+                })
+
+                if (state === 'failed' && !this.closed) {
+                    this.close()
+                    this.onClose({
+                        reason: 'Transporte WebRTC falhou'
+                    })
+                }
+            })
 
             this.transport.on(
                 'connect',
@@ -333,10 +353,162 @@ export class SfuSession {
         }
     }
 
+    startStats(callback) {
+        this.stopStats()
+
+        if (typeof callback !== 'function') return
+
+        const medir = (report, stats, now) => {
+            if (!report) return null
+
+            const previous = this.previousStats.get(report.id)
+            const codec = stats.get(report.codecId)?.mimeType ?? null
+
+            const outbound = this.role === 'publisher'
+
+            const bytes = outbound
+                ? report.bytesSent
+                : report.bytesReceived
+
+            const frames = outbound
+                ? report.framesEncoded
+                : report.framesDecoded
+
+            let bitrate = null
+            let fps = null
+
+            if (previous) {
+                const seconds = (now - previous.time) / 1000
+
+                if (seconds > 0) {
+                    if (
+                        Number.isFinite(bytes) &&
+                        Number.isFinite(previous.bytes)
+                    ) {
+                        bitrate = Math.max(
+                            0,
+                            (bytes - previous.bytes) * 8 / seconds
+                        )
+                    }
+
+                    if (
+                        Number.isFinite(frames) &&
+                        Number.isFinite(previous.frames)
+                    ) {
+                        fps = Math.max(
+                            0,
+                            (frames - previous.frames) / seconds
+                        )
+                    }
+                }
+            }
+
+            this.previousStats.set(report.id, {
+                time: now,
+                bytes,
+                frames
+            })
+
+            return {
+                codec,
+                bitrate,
+                fps: fps ?? report.framesPerSecond ?? null,
+                width: report.frameWidth ?? null,
+                height: report.frameHeight ?? null,
+                packetsLost: report.packetsLost ?? null,
+                framesDropped: report.framesDropped ?? null,
+                jitterMs: Number.isFinite(report.jitter)
+                    ? report.jitter * 1000
+                    : null,
+                encoder: report.encoderImplementation ?? null,
+                limitation: report.qualityLimitationReason ?? null
+            }
+        }
+
+        const atualizar = async () => {
+            if (
+                this.closed ||
+                !this.transport ||
+                this.transport.closed ||
+                this.transport.connectionState !== 'connected'
+            ) return
+
+            try {
+                const stats = await this.transport.getStats()
+
+                if (this.closed) return
+
+                const reports = [...stats.values()]
+
+                const type = this.role === 'publisher'
+                    ? 'outbound-rtp'
+                    : 'inbound-rtp'
+
+                const encontrar = kind => reports.find(report =>
+                    report.type === type &&
+                    (report.kind ?? report.mediaType) === kind &&
+                    stats.get(report.codecId)
+                        ?.mimeType?.toLowerCase() !== 'video/rtx'
+                )
+
+                const now = performance.now()
+
+                const transportReport = reports.find(report =>
+                    report.type === 'transport' &&
+                    report.selectedCandidatePairId
+                )
+
+                const pair = stats.get(
+                    transportReport?.selectedCandidatePairId
+                ) ?? reports.find(report =>
+                    report.type === 'candidate-pair' &&
+                    report.state === 'succeeded' &&
+                    report.nominated
+                )
+
+                const source = reports.find(report =>
+                    report.type === 'media-source' &&
+                    (report.kind ?? report.mediaType) === 'video'
+                )
+
+                callback({
+                    state: this.transport.connectionState,
+                    video: medir(encontrar('video'), stats, now),
+                    audio: medir(encontrar('audio'), stats, now),
+                    rttMs: Number.isFinite(pair?.currentRoundTripTime)
+                        ? pair.currentRoundTripTime * 1000
+                        : null,
+                    capturedFps: source?.framesPerSecond ?? null
+                })
+
+            } catch (error) {
+                if (!this.closed) {
+                    console.warn(
+                        '[SFU] Estatísticas indisponíveis:',
+                        error.message
+                    )
+                }
+            }
+        }
+
+        this.statsTimer = setInterval(atualizar, 3000)
+        atualizar()
+    }
+
+    stopStats() {
+        if (this.statsTimer !== null) {
+            clearInterval(this.statsTimer)
+            this.statsTimer = null
+        }
+
+        this.previousStats.clear()
+    }
+
     close() {
         if (this.closed) return
 
         this.closed = true
+        this.stopStats()
 
         for (const waiter of this.pending.values()) {
             clearTimeout(waiter.timer)
@@ -359,4 +531,35 @@ export class SfuSession {
         this.transport?.close()
         this.socket?.close()
     }
+}
+export function formatSfuStats(data) {
+    const number = (value, digits = 1) =>
+        Number.isFinite(value)
+            ? value.toFixed(digits)
+            : 'n/d'
+
+    const bitrate = (value, unit) => {
+        const divisor = unit === 'Mbps' ? 1_000_000 : 1_000
+
+        return `${number(
+            Number.isFinite(value) ? value / divisor : null,
+            2
+        )} ${unit}`
+    }
+
+    return [
+        `WebRTC: ${data.state}`,
+        `Codec: ${data.video?.codec ?? 'n/d'}`,
+        `Resolução: ${data.video?.width ?? '?'}x${data.video?.height ?? '?'}`,
+        `FPS vídeo: ${number(data.video?.fps)}`,
+        `FPS capturados: ${number(data.capturedFps)}`,
+        `Bitrate vídeo: ${bitrate(data.video?.bitrate, 'Mbps')}`,
+        `Bitrate áudio: ${bitrate(data.audio?.bitrate, 'kbps')}`,
+        `RTT ICE: ${number(data.rttMs)} ms`,
+        `Pacotes perdidos: ${data.video?.packetsLost ?? 'n/d'}`,
+        `Jitter: ${number(data.video?.jitterMs)} ms`,
+        `Frames descartados: ${data.video?.framesDropped ?? 'n/d'}`,
+        `Encoder: ${data.video?.encoder ?? 'n/d'}`,
+        `Limitação: ${data.video?.limitation ?? 'n/d'}`
+    ].join('\n')
 }
