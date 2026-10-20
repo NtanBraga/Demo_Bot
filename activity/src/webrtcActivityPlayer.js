@@ -51,15 +51,11 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                 <span id="rtc-own-transmission-description">
                     Conecte-se ao catálogo para consultar o estado.
                 </span>
-            </div>
 
-            <button
-                id="rtc-own-stop"
-                type="button"
-                hidden
-            >
-                Parar compartilhamento
-            </button>
+                <button id="rtc-own-stop" type="button" hidden>
+                    Parar compartilhamento
+                </button>
+            </div>
 
 
             <p id="rtc-stream-summary">
@@ -224,6 +220,12 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     let latestStreams = []
     let catalogSnapshotReceived = false
     let currentDiscordUserId = null
+
+    const WATCH_RECOVERY_MS = 60_000
+
+    let recoverWatchOwnerId = null
+    let recoverWatchViewerId = null
+    let recoverWatchUntil = 0
 
     let connection = null;
     let remoteStream = null;
@@ -641,6 +643,72 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         }
     }
 
+    
+    function clearWatchRecovery() {
+        recoverWatchOwnerId = null
+        recoverWatchViewerId = null
+        recoverWatchUntil = 0
+    }
+
+    function rememberWatchForRecovery() {
+        const streamId = selectedStreamId ?? pendingStreamId
+
+        if (!streamId || !currentDiscordUserId) {
+            return
+        }
+
+        const stream = latestStreams.find(
+            item => item.id === streamId
+        )
+
+        const ownerId = stream?.owner?.id
+
+        if (typeof ownerId !== 'string' || !/^\d{17,20}$/.test(ownerId)) return
+        
+
+        recoverWatchOwnerId = ownerId
+        recoverWatchViewerId = currentDiscordUserId
+        recoverWatchUntil = Date.now() + WATCH_RECOVERY_MS
+
+        log('Seleção salva para recuperação da transmissão.')
+    }
+
+    function recoverWatchIfPossible() {
+        if (!recoverWatchOwnerId) return
+
+        if (Date.now() > recoverWatchUntil || (currentDiscordUserId && recoverWatchViewerId !== currentDiscordUserId)
+        ) {
+            clearWatchRecovery()
+            return
+        }
+
+        if (
+            !authenticated ||
+            !catalogSnapshotReceived ||
+            !currentDiscordUserId ||
+            selectedStreamId ||
+            pendingStreamId
+        ) return
+        
+
+        const stream = latestStreams.find(item =>
+            item.owner?.id === recoverWatchOwnerId &&
+            (item.status === 'live' || item.status === 'idle')
+        )
+
+        if (!stream) return
+        
+
+        const streamId = stream.id
+
+        clearWatchRecovery()
+
+        log('Restaurando a transmissão do mesmo proprietário.')
+
+        watchStream(streamId)
+    }
+
+
     function watchStream(streamId){
         if(!authenticated || selectedStreamId || pendingStreamId) return
 
@@ -649,6 +717,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
             )
 
         if(!available) return
+
+        clearWatchRecovery()
 
         resetAutoCodecOrder()
         pendingStreamId = streamId
@@ -1118,6 +1188,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
         if (manual === true || manual?.type) {
             autoReconnectRelay = false
+
+            clearWatchRecovery()
 
             clearTimeout(relayRetryTimer)
             relayRetryTimer = null
@@ -1708,6 +1780,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
                 renderStreamList(message.streams)
 
+                recoverWatchIfPossible()
+
                 const selected = latestStreams.find(stream => stream.id === selectedStreamId)
 
                 if (selected?.mode === 'sfu' && selected.status === 'idle') {
@@ -1752,6 +1826,10 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
                 break
             case 'viewer:unwatched':
+
+                if (!leavingStream) rememberWatchForRecovery()
+                
+
                 selectedStreamId = null
                 pendingStreamId = null
                 leavingStream = false
@@ -1918,11 +1996,12 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
             const shouldRetry = autoReconnectRelay
 
+            if (shouldRetry && !leavingStream) rememberWatchForRecovery()
+
             disconnect(false)
 
-            if (shouldRetry) {
-                scheduleRelayRetry()
-            }
+            if (shouldRetry) scheduleRelayRetry()
+            
         })
 
         ws.addEventListener('error', () => {
