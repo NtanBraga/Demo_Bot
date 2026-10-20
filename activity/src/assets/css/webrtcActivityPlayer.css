@@ -296,6 +296,46 @@
     font-weight: 500;
 }
 
+.demo-live-player #rtc-own-transmission {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    margin: 12px 0;
+    padding: 12px;
+
+    background: #222938;
+    border: 1px solid #40495b;
+    border-left: 3px solid #64748b;
+    border-radius: 8px;
+}
+
+.demo-live-player #rtc-own-transmission-title {
+    font-size: 14px;
+    color: #f1f5f9;
+}
+
+.demo-live-player #rtc-own-transmission-description {
+    font-size: 12px;
+    color: #aebbd0;
+}
+
+.demo-live-player #rtc-own-transmission[data-state="live"] {
+    border-left-color: #22c55e;
+}
+
+.demo-live-player #rtc-own-transmission[data-state="idle"] {
+    border-left-color: #eab308;
+}
+
+.demo-live-player #rtc-own-transmission[data-state="offline"] {
+    border-left-color: #64748b;
+}
+
+.demo-live-player #rtc-own-transmission[data-state="checking"] {
+    border-left-color: #60a5fa;
+}
+
 .demo-live-player .rtc-stream-card__owner-info
 .rtc-stream-card__title {
     display: block;

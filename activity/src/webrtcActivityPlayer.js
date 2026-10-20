@@ -36,8 +36,27 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         </div>
 
         <div id="rtc-stream-catalog">
-            <h4>Transmissões disponiveis</h4>
-            <p id="rtc-stream-summary">Conecte-se para consultar a lista.</p>
+            <h4>Transmissões disponíveis</h4>
+
+            <div
+                id="rtc-own-transmission"
+                data-state="disconnected"
+                role="status"
+                aria-live="polite"
+            >
+                <strong id="rtc-own-transmission-title">
+                    Sua transmissão
+                </strong>
+
+                <span id="rtc-own-transmission-description">
+                    Conecte-se ao catálogo para consultar o estado.
+                </span>
+            </div>
+
+            <p id="rtc-stream-summary">
+                Conecte-se para consultar a lista.
+            </p>
+
             <div id="rtc-stream-list"></div>
         </div>
 
@@ -141,6 +160,10 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     const streamSummary = section.querySelector('#rtc-stream-summary')
     const streamList = section.querySelector('#rtc-stream-list')
 
+    const ownTransmission = section.querySelector('#rtc-own-transmission')
+    const ownTransmissionTitle = section.querySelector('#rtc-own-transmission-title')
+    const ownTransmissionDescription = section.querySelector('#rtc-own-transmission-description')
+
     const codecAuto = section.querySelector('#rtc-codec-auto');
     const codecSelect = section.querySelector('#rtc-codec-select');
     const codecInfo = section.querySelector('#rtc-codec-info');
@@ -186,6 +209,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     let pendingStreamId = null
     let leavingStream = false
     let latestStreams = []
+    let catalogSnapshotReceived = false
     let currentDiscordUserId = null
 
     let connection = null;
@@ -299,11 +323,69 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
     }
 
+    
+    function updateOwnTransmissionState() {
+        let state = 'disconnected'
+        let title = 'Sua transmissão'
+        let description = 'Conecte-se ao catálogo para consultar o estado.'
+
+        if (authenticated && !currentDiscordUserId) {
+            state = 'checking'
+            description = 'Verificando sua identidade Discord.'
+        } else if (authenticated && !catalogSnapshotReceived) {
+            state = 'checking'
+            description = 'Consultando suas transmissões...'
+        } else if (authenticated && catalogSnapshotReceived) {
+            const ownedStreams = latestStreams.filter(stream =>
+                stream &&
+                stream.owner?.id === currentDiscordUserId &&
+                (stream.status === 'live' || stream.status === 'idle')
+            )
+
+            const liveCount = ownedStreams.filter(
+                stream => stream.status === 'live'
+            ).length
+
+            const idleCount = ownedStreams.filter(
+                stream => stream.status === 'idle'
+            ).length
+
+            if (ownedStreams.length === 0) {
+                state = 'offline'
+                description = 'Você não possui transmissões conectadas.'
+
+            } else if (ownedStreams.length === 1) {
+                if (liveCount === 1) {
+                    state = 'live'
+                    title = 'Você está ao vivo'
+                    description = 'Sua transmissão está ativa.'
+
+                }else{
+                    state = 'idle'
+                    title = 'Transmissor conectado'
+                    description = 'Aguardando você iniciar o compartilhamento.'
+                }
+
+            }else{
+                state = liveCount > 0 ? 'live' : 'idle'
+                title = `${ownedStreams.length} transmissões suas`
+                description = `${liveCount} ao vivo · ${idleCount} aguardando`
+            }
+        }
+
+        ownTransmission.dataset.state = state
+        ownTransmissionTitle.textContent = title
+        ownTransmissionDescription.textContent = description
+    }
+
+
     function renderStreamList(items){
 
         if(Array.isArray(items)){
             latestStreams = items
         }
+
+        updateOwnTransmissionState()
 
         currentStream.textContent = leavingStream
             ? 'Saindo da transmissão...'
@@ -999,6 +1081,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
         connectGeneration++
 
+        catalogSnapshotReceived = false
+
         if (manual === true || manual?.type) {
             autoReconnectRelay = false
 
@@ -1371,6 +1455,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         switch(message.type){
             case 'viewer:ready':
                 authenticated = true
+                catalogSnapshotReceived = false
 
                 currentDiscordUserId =
                     typeof message.discordIdentity?.id === 'string'
@@ -1569,6 +1654,10 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                 break
             }
             case 'streams:snapshot':
+                if (Array.isArray(message.streams)) {
+                    catalogSnapshotReceived = true
+                }
+
                 renderStreamList(message.streams)
 
                 const selected = latestStreams.find(stream => stream.id === selectedStreamId)
