@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv } from "vite"
+import { resolve } from 'node:path'
 
 export default defineConfig(({mode}) => {
     const env = loadEnv(mode, process.cwd(), "")
@@ -33,11 +34,15 @@ export default defineConfig(({mode}) => {
                     changeOrigin: true
                 }
             }
+        },
+        build: {
+            rolldownOptions : {
+                input: {
+                    activity: resolve(process.cwd(), 'index.html'),
+                    publisher: resolve(process.cwd(), 'transmitirWebRTC.html')
+                }
+            }
         }
     }
     
 })
-
-/* Get-ChildItem Env:DEMO_MSE* */
-/* $env:DEMO_MSE_PUBLISH_KEY = node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-    $env:DEMO_MSE_VIEW_KEY = node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" */

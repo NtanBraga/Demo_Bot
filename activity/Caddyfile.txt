@@ -1,0 +1,29 @@
+:5173 {
+	# Apenas conexões locais.
+	# O Cloudflare Tunnel acessará o Caddy localmente.
+	bind 127.0.0.1 [::1]
+
+	# Arquivos gerados pelo Vite.
+	root * ./dist
+
+	# Compressão de arquivos.
+	encode zstd gzip
+
+	# Relay WebRTC.
+	@webrtc path /ws-webrtc
+	reverse_proxy @webrtc 127.0.0.1:3003
+
+	# SFU mediasoup pela conexão SSH.
+	@sfu path /ws-sfu
+	reverse_proxy @sfu 127.0.0.1:3004
+
+	# APIs de autenticação Discord.
+	@api {
+		path /api/publisher/* /api/token /api/identity
+	}
+
+	reverse_proxy @api 127.0.0.1:3003
+
+	# Frontend compilado.
+	file_server
+}
