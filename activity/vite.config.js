@@ -7,7 +7,7 @@ export default defineConfig(({mode}) => {
         server: {
             strictPort: true,
             allowedHosts: [
-                env.CLOUDFLARE_TUNNEL
+                env.HOST
             ],
             proxy: {
                 "/ws-webrtc": {
