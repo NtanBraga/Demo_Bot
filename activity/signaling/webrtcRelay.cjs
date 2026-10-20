@@ -681,6 +681,54 @@ wss.on('connection', (ws, req) => {
         }
         if(ws.role === 'viewer'){
 
+            if (msg.type === 'publisher:remote-stop') {
+
+                const discordUserId = ws.discordUser?.id
+
+                if (
+                    typeof discordUserId !== 'string' ||
+                    !/^\d{17,20}$/.test(discordUserId)
+                ) {
+                    send(ws, {
+                        type: 'publisher:remote-stop:result',
+                        ok: false,
+                        message: 'Identidade Discord não verificada.'
+                    })
+                    return
+                }
+                const stream = [...streams.values()].find(
+                    entry => entry.owner?.id === discordUserId
+                )
+
+                if (
+                    !stream ||
+                    stream.status !== 'live' ||
+                    stream.publisher?.readyState !== WebSocket.OPEN
+                ) {
+                    send(ws, {
+                        type: 'publisher:remote-stop:result',
+                        ok: false,
+                        message: 'Você não possui uma transmissão ao vivo.'
+                    })
+                    return
+                }
+
+                send(stream.publisher, {
+                    type: 'publisher:remote-stop',
+                    streamId: stream.id
+                })
+
+                send(ws, {
+                    type: 'publisher:remote-stop:result',
+                    ok: true,
+                    message: 'Solicitação enviada ao transmissor.'
+                })
+
+                console.log('[WebRTC] Parada remota solicitada:',stream.id)
+
+                return
+            }
+
             if (msg.type === 'viewer:sfu-grant') {
                 const roomId = ws.watchingStreamId
                 const stream = streams.get(roomId)

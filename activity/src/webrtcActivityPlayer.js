@@ -53,6 +53,15 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                 </span>
             </div>
 
+            <button
+                id="rtc-own-stop"
+                type="button"
+                hidden
+            >
+                Parar compartilhamento
+            </button>
+
+
             <p id="rtc-stream-summary">
                 Conecte-se para consultar a lista.
             </p>
@@ -163,6 +172,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     const ownTransmission = section.querySelector('#rtc-own-transmission')
     const ownTransmissionTitle = section.querySelector('#rtc-own-transmission-title')
     const ownTransmissionDescription = section.querySelector('#rtc-own-transmission-description')
+    const ownStopButton = section.querySelector('#rtc-own-stop')
 
     const codecAuto = section.querySelector('#rtc-codec-auto');
     const codecSelect = section.querySelector('#rtc-codec-select');
@@ -186,6 +196,9 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
     let sfuRetryTimer = null
     let sfuRetryAttempts = 0
+
+    let remoteStopPending = false
+    let remoteStopTimer = null
 
     let relayRetryTimer = null
     let relayRetryAttempts = 0
@@ -323,6 +336,14 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
     }
 
+    function clearRemoteStopPending() {
+        if (remoteStopTimer !== null) {
+            clearTimeout(remoteStopTimer)
+            remoteStopTimer = null
+        }
+
+        remoteStopPending = false
+    }
     
     function updateOwnTransmissionState() {
         let state = 'disconnected'
@@ -376,7 +397,19 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         ownTransmission.dataset.state = state
         ownTransmissionTitle.textContent = title
         ownTransmissionDescription.textContent = description
-    }
+
+        if (state !== 'live' && remoteStopPending) {
+            clearRemoteStopPending()
+        }
+
+        ownStopButton.hidden = state !== 'live'
+
+        ownStopButton.disabled = !authenticated || remoteStopPending
+
+        ownStopButton.textContent = remoteStopPending
+            ? 'Aguardando transmissor...'
+            : 'Parar compartilhamento'
+        }
 
 
     function renderStreamList(items){
@@ -1106,7 +1139,9 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         closePeer();
         sfuRetryAttempts = 0
         setPlayerState('idle')
+        clearRemoteStopPending()
         renderStreamList([])
+        
 
         streamSummary.textContent = 'Conecte-se para consultar a lista.'
 
@@ -1453,6 +1488,19 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         if(!message || typeof message !== 'object' || typeof message.type !== 'string')return
 
         switch(message.type){
+
+            case 'publisher:remote-stop:result': {
+                if (!remoteStopPending) break
+                if (!message.ok) {
+                    clearRemoteStopPending()
+                    log('Parada remota recusada: ' + (message.message || 'Erro desconhecido.'))
+                    updateOwnTransmissionState()
+                    break
+                }
+                log('Comando encaminhado ao transmissor.')
+                break
+            }
+
             case 'viewer:ready':
                 authenticated = true
                 catalogSnapshotReceived = false
@@ -1924,6 +1972,48 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
     connectButton.addEventListener('click', connect)
     disconnectButton.addEventListener('click', disconnect)
+    ownStopButton.addEventListener('click', () => {
+
+        if (remoteStopPending || !authenticated || !currentDiscordUserId) return
+
+        const ownLiveStream = latestStreams.find(
+            stream =>
+                stream.owner?.id === currentDiscordUserId &&
+                stream.status === 'live'
+        )
+
+        if (!ownLiveStream) {
+            updateOwnTransmissionState()
+            return
+        }
+
+        const sent = send({
+            type: 'publisher:remote-stop'
+        })
+
+        if (!sent) {
+            log('Não foi possível solicitar a parada remota.')
+            return
+        }
+
+        remoteStopPending = true
+
+        log('Solicitando parada da sua transmissão...')
+
+        updateOwnTransmissionState()
+
+        remoteStopTimer = setTimeout(() => {
+            remoteStopTimer = null
+
+            if (!remoteStopPending) return
+
+            remoteStopPending = false
+
+            log('Sem confirmação da parada. ' + 'Verifique o transmissor externo.')
+
+            updateOwnTransmissionState()
+        }, 10000)
+    })
     transmitButton.addEventListener('click', async () => {
         const publisherURL = import.meta.env.VITE_PUBLISHER_URL
 

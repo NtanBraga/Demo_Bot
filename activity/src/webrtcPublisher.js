@@ -13,6 +13,7 @@ const logBox = document.querySelector('#webrtc-logs');
 
 let socket = null;
 let authenticated = false;
+let publisherStreamId = null
 let captureStream = null;
 let capturing = false;
 let iceServers = [];
@@ -601,8 +602,18 @@ async function openPeer(viewerId){
 
 async function handleMessage(message){
     switch(message.type){
+        case 'publisher:remote-stop': {
+            if (!authenticated || !captureStream || message.streamId !== publisherStreamId) break
+            
+            log('Parada solicitada pela Discord Activity.')
+
+            stopCapture()
+
+            break
+        }
         case 'publisher:ready':
             authenticated = true
+            publisherStreamId = message.streamId
 
             publisherAuthenticatedByDiscord =
                 message.authMethod === 'discord'
@@ -966,6 +977,7 @@ function connect(){
         socket = null
         authenticated = false
         iceServers = []
+        publisherStreamId = null
 
         viewers.clear()
         viewerCodecPreferences.clear()
