@@ -74,6 +74,9 @@ function getStreamList(requester = null){
             status: stream.status,
             registeredAt: stream.registeredAt,
             startedAt: stream.startedAt,
+            owner: canSeeIdentities
+                ? stream.owner
+                : null,
             viewerCount: watching.length,
             participants
         }
@@ -425,6 +428,14 @@ wss.on('connection', (ws, req) => {
                     id: streamId,
                     mode: ws.mode,
                     publisher: ws,
+                    owner: ws.discordUser
+                        ? {
+                            id: ws.discordUser.id,
+                            username: ws.discordUser.username,
+                            global_name: ws.discordUser.global_name,
+                            avatar: ws.discordUser.avatar
+                        }
+                        : null,
                     status: 'idle',
                     registeredAt: new Date().toISOString(),
                     startedAt: null

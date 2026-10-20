@@ -186,6 +186,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     let pendingStreamId = null
     let leavingStream = false
     let latestStreams = []
+    let currentDiscordUserId = null
 
     let connection = null;
     let remoteStream = null;
@@ -351,10 +352,58 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
             const header = document.createElement('div')
             header.className = 'rtc-stream-card__header'
 
+            const owner = (
+                stream.owner &&
+                typeof stream.owner.id === 'string' &&
+                /^\d{17,20}$/.test(stream.owner.id) &&
+                typeof stream.owner.username === 'string'
+            )
+                ? stream.owner
+                : null
+
+            const ownerName = owner
+                ? (owner.global_name || owner.username || 'Usuário Discord')
+                : null
+
+            const isOwner = Boolean(
+                owner &&
+                currentDiscordUserId === owner.id
+            )
+
+            const ownerBox = document.createElement('div')
+            ownerBox.className = 'rtc-stream-card__owner'
+
+            if (owner) {
+                const avatar = criarAvatarEspectador(owner)
+                avatar.classList.add('rtc-stream-card__owner-avatar')
+
+                ownerBox.appendChild(avatar)
+            }
+
+            const ownerInfo = document.createElement('div')
+            ownerInfo.className = 'rtc-stream-card__owner-info'
+
             const title = document.createElement('strong')
             title.className = 'rtc-stream-card__title'
-            title.textContent = `Transmissão ${stream.id.slice(0, 8)}`
 
+            title.textContent = ownerName
+                ? `Transmissão de ${ownerName}`
+                : `Transmissão ${stream.id.slice(0, 8)}`
+
+            ownerInfo.appendChild(title)
+
+            if (isOwner) {
+                const ownerLabel = document.createElement('span')
+
+                ownerLabel.className = 'rtc-stream-card__owner-label'
+                ownerLabel.textContent = 'Sua transmissão'
+
+                ownerInfo.appendChild(ownerLabel)
+            }
+
+            ownerBox.appendChild(ownerInfo)
+
+            // Indicador de estado já existente.
             const status = document.createElement('span')
             status.className = 'rtc-stream-card__status'
 
@@ -362,7 +411,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                 ? 'Ao vivo'
                 : 'Aguardando'
 
-            header.append(title, status)
+            header.append(ownerBox, status)
 
             const footer = document.createElement('div')
             footer.className = 'rtc-stream-card__footer'
@@ -959,6 +1008,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
         const oldSocket = socket;
 
+        currentDiscordUserId = null
+
         socket = null;
         authenticated = false;
         iceServers = [];
@@ -1320,6 +1371,11 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         switch(message.type){
             case 'viewer:ready':
                 authenticated = true
+
+                currentDiscordUserId =
+                    typeof message.discordIdentity?.id === 'string'
+                        ? message.discordIdentity.id
+                        : null
 
                 autoReconnectRelay = true
                 relayRetryAttempts = 0

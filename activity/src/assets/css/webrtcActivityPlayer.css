@@ -269,6 +269,39 @@
     overflow-wrap: anywhere;
 }
 
+.demo-live-player .rtc-stream-card__owner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+}
+
+.demo-live-player .rtc-stream-card__owner-avatar {
+    width: 36px;
+    height: 36px;
+    margin-left: 0;
+}
+
+.demo-live-player .rtc-stream-card__owner-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.demo-live-player .rtc-stream-card__owner-label {
+    color: #55d9a6;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.demo-live-player .rtc-stream-card__owner-info
+.rtc-stream-card__title {
+    display: block;
+    overflow-wrap: anywhere;
+}
+
 .demo-live-player .rtc-stream-card__status {
     display: inline-flex;
     align-items: center;
