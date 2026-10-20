@@ -16,6 +16,7 @@ let authenticated = false;
 let publisherStreamId = null
 let captureStream = null;
 let capturing = false;
+let switchingSource = false
 let iceServers = [];
 
 const publisherInstanceId = crypto.randomUUID()
@@ -50,6 +51,10 @@ const VALID_VIDEO_CODECS = ['h264', 'av1', 'vp8']
 
 const sfuCodecWrapper = document.createElement('label')
 
+const switchSourceButton = document.querySelector('#switch-webrtc-source')
+
+startButton.insertAdjacentElement('afterend',switchSourceButton)
+
 sfuCodecWrapper.textContent = 'Codec de transmissão SFU: '
 
 const sfuCodecSelect = document.createElement('select')
@@ -65,7 +70,7 @@ for (const codec of ['h264', 'vp8', 'av1']) {
     sfuCodecSelect.appendChild(option)
 }
 
-sfuCodecSelect.value = 'h264'
+sfuCodecSelect.value = 'av1'
 
 sfuCodecWrapper.appendChild(sfuCodecSelect)
 
@@ -155,12 +160,10 @@ function updateButtons(){
 
     startButton.disabled = !authenticated || (USE_SFU && !sfuReady) || captureStream !== null || capturing
     stopButton.disabled = captureStream === null
+    switchSourceButton.disabled = !authenticated || !USE_SFU || !sfuReady || !captureStream || capturing || switchingSource
     audioMode.disabled = captureStream !== null || capturing
 
-    sfuCodecSelect.disabled =
-        !sfuReady ||
-        captureStream !== null ||
-        capturing
+    sfuCodecSelect.disabled = !sfuReady || captureStream !== null || capturing
 
     if (USE_SFU && sfuReady && sfuSession?.device) {
         const supported = sfuSession.device.sendRtpCapabilities.codecs
@@ -1139,12 +1142,191 @@ async function startCapture(){
     }
 }
 
+async function switchCaptureSource() {
+
+    if (
+        !USE_SFU ||
+        !authenticated ||
+        !sfuReady ||
+        !captureStream ||
+        !sfuSession ||
+        capturing ||
+        switchingSource
+    ) return
+
+    const previousStream = captureStream
+    const session = sfuSession
+    const mode = audioMode.value
+
+    let nextStream = null
+
+    switchingSource = true
+    updateButtons()
+
+    statusRTC.textContent = 'Escolhendo uma nova fonte...'
+
+    try {
+        const options = {
+            video: {
+                frameRate: {
+                    ideal: 30,
+                    max: 30
+                },
+                width: {
+                    ideal: 1920
+                },
+                height: {
+                    ideal: 1080
+                }
+            },
+
+            audio: mode !== 'none',
+
+            systemAudio:
+                mode === 'system' ? 'include' : 'exclude'
+        }
+
+        if (mode === 'system') {
+            options.video.displaySurface = 'monitor'
+            options.windowAudio = 'system'
+        }
+
+        nextStream = await navigator.mediaDevices.getDisplayMedia(options)
+
+        const nextVideoTrack = nextStream.getVideoTracks()[0]
+
+        let nextAudioTrack = nextStream.getAudioTracks().find(
+                track => track.readyState === 'live'
+            ) ?? null
+
+        if (!nextVideoTrack || nextVideoTrack.readyState !== 'live') throw new Error('A nova fonte não disponibilizou vídeo.')
+        
+
+        if (
+            captureStream !== previousStream ||
+            sfuSession !== session ||
+            session.closed ||
+            !authenticated ||
+            !sfuReady
+        ) {
+            log('Troca cancelada: a sessão mudou.')
+            return
+        }
+
+        nextVideoTrack.contentHint = ''
+
+        const previousVideoProducerId = session.producers.get('video')?.id
+
+        const previousAudioProducerId = session.producers.get('audio')?.id ?? null
+
+        const result = await session.replaceCaptureTracks(
+            nextVideoTrack,
+            nextAudioTrack
+        )
+
+        if (
+            captureStream !== previousStream ||
+            sfuSession !== session ||
+            session.closed ||
+            !authenticated ||
+            !sfuReady
+        ) {
+            log('A sessão mudou durante a troca.')
+            return
+        }
+
+        if (!result.audioProducerId && nextAudioTrack) {
+            nextStream.removeTrack(nextAudioTrack)
+            nextAudioTrack.stop()
+            nextAudioTrack = null
+
+            log(
+                'A transmissão foi iniciada sem producer de áudio. ' +
+                'O vídeo foi alterado, mas o áudio não poderá ' +
+                'ser ativado até uma nova publicação.'
+            )
+        }
+
+        captureStream = nextStream
+        nextStream = null
+
+        const activeStream = captureStream
+
+        preview.srcObject = activeStream
+
+        preview.play().catch(error => {
+            log('Prévia: ' + error.message)
+        })
+
+        nextVideoTrack.addEventListener('ended', () => {
+            if (captureStream !== activeStream) return
+
+            log('Nova fonte encerrada pelo navegador.')
+            stopCapture()
+        }, { once: true })
+
+        for (const track of previousStream.getTracks()) {
+            track.stop()
+        }
+
+        log('Fonte de captura alterada com sucesso.')
+
+        log('Producer de vídeo preservado: ' + (previousVideoProducerId === result.videoProducerId))
+
+        if (previousAudioProducerId) {
+            log('Producer de áudio preservado: ' + (previousAudioProducerId === result.audioProducerId))
+        }
+
+        if (mode === 'none') {
+            log('Áudio: desativado pelo usuário.')
+
+        } else if (result.audioActive) {
+            log('Áudio: nova fonte conectada.')
+
+        } else {
+            log( 'Áudio: indisponível na nova fonte. ' + 'Transmitindo apenas vídeo.')
+        }
+
+        const settings = nextVideoTrack.getSettings()
+
+        log('Resolução atual: ' + `${settings.width ?? '?'}x${settings.height ?? '?'}`)
+
+        statusRTC.textContent = 'Fonte alterada. Transmissão permanece ao vivo.'
+
+    } catch (error) {
+
+        if (error.name === 'NotAllowedError' || error.name === 'AbortError') {
+            log('Seleção da nova fonte cancelada.')
+
+        } else {
+            log('Erro ao trocar fonte: ' + `${error.name || 'Error'} - ${error.message}`)
+        }
+
+        if (captureStream === previousStream) {
+            statusRTC.textContent = 'Fonte anterior mantida.'
+        }
+
+    } finally {
+
+        if (nextStream) {
+            for (const track of nextStream.getTracks()) {
+                track.stop()
+            }
+        }
+
+        switchingSource = false
+        updateButtons()
+    }
+}
+
+
 connectButton.addEventListener('click', connect)
 startButton.addEventListener('click', startCapture)
 stopButton.addEventListener('click', () => {
     log('Captura encerrada manualmente.')
     stopCapture()
 })
+switchSourceButton.addEventListener('click',switchCaptureSource)
 
 window.addEventListener('pagehide', () => {
     closingPage = true
