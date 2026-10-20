@@ -4,86 +4,153 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Demo Live - WebRTC Publisher</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #17191f;
-            color: white;
-            margin: 32px;
-        }
-        main{
-            max-width: 1100px;
-            margin: auto;
-        }
-        .controls{
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            margin: 18px 0;
-            align-items: center;
-        }
-        input, select, button {
-            padding: 10px;
-        }
-        button {
-            cursor: pointer;
-        }
-        button:disabled{
-            cursor: not-allowed;
-            opacity: 0.5;
-        }
-        video {
-            display: block;
-            width: 100%;
-            max-height: 600px;
-            background: black;
-        }
-        pre{
-            background: #101116;
-            padding: 15px;
-            height: 230px;
-            overflow: auto;
-            white-space: pre-wrap;
-        }
-    </style>
+    <link rel="stylesheet" href="./src/assets/css/webrtcTransmitir.css"></link>
 </head>
 <body>
-    <main>
-        <h1>Demo live - Transmissor WebRTC</h1>
-        <div class="controls">
-            <span id="publisher-discord-status">
-                Verificando autenticação Discord...
+    
+<main class="publisher-app">
+
+    <header class="publisher-header">
+        <div class="publisher-brand">
+            <span class="publisher-logo">
+                <img src="./src/assets/img/demo.png" alt="demo picture">
             </span>
 
-            <button id="publisher-discord-login" type="button">
-                Entrar com Discord
-            </button>
+            <div>
+                <h1>Demo Live</h1>
+                <p>Estúdio de transmissão</p>
+            </div>
         </div>
-        <p id="webrtc-status">Aguardando conexão.</p>
 
-        <div class="controls">
-            <input id="publisher-key" type="password" placeholder="Chave de transmissor" autocomplete="off">
-            <button id="connect-webrtc">Conectar sinalização</button>
-        </div>
-        <div class="controls">
-            <span id="audio-capture-status" role="status">
-                Áudio: aguardando compartilhamento.
+        <div class="publisher-connection-status"
+             role="status">
+            <span class="status-dot"></span>
+            <span id="webrtc-status">
+                Aguardando conexão.
             </span>
-
-            <button id="start-webrtc" disabled>Compartilhar tela</button>
-            <button id="switch-webrtc-source" type="button" disabled>Trocar janela / tela</button>
-            <button id="stop-webrtc" disabled>Parar compartilhamento</button>
         </div>
+    </header>
 
-        <h2>Pré-visualização local</h2>
+    <div class="publisher-layout">
 
-        <video id="preview-webrtc" autoplay muted playsinline></video>
+        <section class="publisher-main">
 
-        <h2>Diagnóstico WebRTC</h2>
+            <div class="publisher-card preview-card">
 
-        <pre id="webrtc-logs"></pre>
+                <div class="card-heading">
+                    <div>
+                        <h2>Pré-visualização</h2>
+                        <p>Visualização local da fonte compartilhada</p>
+                    </div>
 
-    </main>
+                    <span class="preview-label">
+                        PREVIEW
+                    </span>
+                </div>
+
+                <div class="publisher-preview-stage">
+                    <video
+                        id="preview-webrtc"
+                        autoplay
+                        muted
+                        playsinline
+                    ></video>
+                </div>
+
+                <div class="preview-footer">
+                    <span>
+                        A transmissão aparecerá aqui quando iniciada.
+                    </span>
+                </div>
+            </div>
+        </section>
+
+        <aside class="publisher-sidebar">
+            <section class="publisher-card">
+
+                <div class="card-heading">
+                    <h2>Conta Discord</h2>
+                </div>
+
+                <div class="discord-account">
+                    <span id="publisher-discord-status">
+                        Verificando autenticação Discord...
+                    </span>
+
+                    <button id="publisher-discord-login" type="button" class="button-secondary">
+                        Entrar com Discord
+                    </button>
+                </div>
+
+            </section>
+
+            <section class="publisher-card">
+
+                <div class="card-heading">
+                    <h2>Conexão</h2>
+                </div>
+
+                <div class="publisher-connect-fields">
+                    <label for="publisher-key">
+                        Chave de transmissor
+                    </label>
+
+                    <input
+                        id="publisher-key"
+                        type="password"
+                        placeholder="Chave de transmissor"
+                        autocomplete="off"
+                    >
+
+                    <button id="connect-webrtc" type="button" class="button-secondary">
+                        Conectar sinalização
+                    </button>
+                </div>
+            </section>
+
+            <section class="publisher-card">
+
+                <div class="card-heading">
+                    <h2>Compartilhamento</h2>
+                </div>
+
+                <div class="publisher-actions">
+                    <button id="start-webrtc" class="button-primary" disabled>
+                        Compartilhar tela
+                    </button>
+
+                    <button id="switch-webrtc-source" class="button-secondary" type="button" disabled>
+                        Trocar janela / tela
+                    </button>
+
+                    <button id="stop-webrtc" class="button-danger" disabled>
+                        Parar compartilhamento
+                    </button>
+                </div>
+
+                <div class="publisher-audio-info">
+                    <span id="audio-capture-status" role="status">
+                        Áudio: aguardando compartilhamento.
+                    </span>
+                </div>
+            </section>
+        </aside>
+    </div>
+
+    <details class="publisher-diagnostics">
+
+        <summary>
+            <span>Diagnóstico técnico</span>
+            <span class="diagnostics-hint">
+                Logs e estatísticas SFU
+            </span>
+        </summary>
+        <div class="diagnostics-content">
+            <pre id="webrtc-logs"></pre>
+        </div>
+    </details>
+</main>
+
 
     <script type="module" src="./src/webrtcPublisher.js"></script>
 </body>
