@@ -20,16 +20,6 @@ export default defineConfig(({mode}) => {
                     ws: true,
                     changeOrigin: false
                 },
-                "/ws-mse": {
-                    target: "ws://127.0.0.1:3002",
-                    ws: true,
-                    changeOrigin: false
-                },
-                "/ws": {
-                    target: "ws://127.0.0.1:3001",
-                    ws: true,
-                    changeOrigin: false
-                },
                 "/api/publisher": {
                     target: "http://127.0.0.1:3003",
                     changeOrigin: true
