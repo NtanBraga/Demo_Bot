@@ -886,12 +886,16 @@ async function handleMessage(message){
         case 'error':
             if (
                 !authenticated &&
-                message.message?.includes('Publicação não autorizada')
+                (
+                    message.message?.includes('Publicação não autorizada') ||
+                    message.message?.includes('Você já possui uma transmissão ativa')
+                )
             ) {
                 publisherAuthenticatedByDiscord = false
                 cachedPublisherToken = null
                 pendingPublisherToken = null
             }
+
             log(`Servidor: ${message.message || 'Erro desconhecido.'}`)
             statusRTC.textContent = 'Erro de sinalização.'
             break

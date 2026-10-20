@@ -378,31 +378,36 @@ wss.on('connection', (ws, req) => {
 
         if(!ws.role){
             if (msg.type === 'publisher:join') {
+                
+                                
                 const session = getPublisherSession(req)
 
-                const validLegacyToken = equalToken(
-                    msg.token,
-                    PUBLISH_TOKEN
-                )
+                const discordUser = session?.user
 
-                const validDiscordLogin = Boolean(
-                    session?.user?.id
-                )
-
-                if (!validLegacyToken && !validDiscordLogin) {
+                if (
+                    typeof discordUser?.id !== 'string' ||
+                    !/^\d{17,20}$/.test(discordUser.id)
+                ) {
                     return reject(
                         ws,
-                        'Publicação não autorizada. Entre com uma conta Discord autorizada ou utilize uma chave válida.'
+                        'Publicação não autorizada. Entre com Discord.'
                     )
                 }
 
-                ws.discordUser = validDiscordLogin
-                    ? session.user
-                    : null
+                const existingPublisher = [...publishers.values()].find(
+                    publisher =>
+                        publisher.discordUser?.id === discordUser.id
+                )
 
-                ws.publisherAuthMethod = validLegacyToken
-                    ? 'token'
-                    : 'discord'
+                if (existingPublisher) {
+                    return reject(
+                        ws,
+                        'Você já possui uma transmissão ativa. Encerre a transmissão anterior antes de iniciar outra.'
+                    )
+                }
+
+                ws.discordUser = discordUser
+                ws.publisherAuthMethod = 'discord'
 
                 if(publishers.size >= MAX_PUBLISHERS){
                     return reject(ws, 'Limite de transmissores atingido.')
