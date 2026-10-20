@@ -92,6 +92,45 @@ function broadcastStreamList(){
     }
 }
 
+
+function unregisterPublisher(publisher) {
+    const streamId = publisher.streamId
+
+    if (publishers.get(streamId) !== publisher) {
+        return false
+    }
+
+    publishers.delete(streamId)
+    streams.delete(streamId)
+
+    console.log(
+        `[WebRTC] Transmissão removida: ${streamId}`
+    )
+
+    for (const viewer of viewers.values()) {
+        if (viewer.watchingStreamId !== streamId) {
+            continue
+        }
+
+        viewer.watchingStreamId = null
+        viewer.negotiationId = null
+
+        send(viewer, {
+            type: 'stream:ended',
+            streamId
+        })
+
+        send(viewer, {
+            type: 'viewer:unwatched'
+        })
+    }
+
+    broadcastStreamList()
+
+    return true
+}
+
+
 function stopWatching(viewer, notify = true){
     const previousId = viewer.watchingStreamId
 
@@ -394,17 +433,39 @@ wss.on('connection', (ws, req) => {
                     )
                 }
 
+                const instanceId = msg.instanceId
+
+                const validInstanceId =
+                    typeof instanceId === 'string' &&
+                    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(instanceId)
+
+                if (!validInstanceId) {
+                    return reject(ws, 'Identificador da página de transmissão inválido.')
+                }
+
                 const existingPublisher = [...publishers.values()].find(
-                    publisher =>
-                        publisher.discordUser?.id === discordUser.id
+                    publisher => publisher.discordUser?.id === discordUser.id
                 )
 
                 if (existingPublisher) {
-                    return reject(
-                        ws,
-                        'Você já possui uma transmissão ativa. Encerre a transmissão anterior antes de iniciar outra.'
-                    )
+                    const sameInstance = existingPublisher.publisherInstanceId === instanceId
+
+                    const oldConnectionClosing = existingPublisher.readyState !== WebSocket.OPEN
+
+                    if (!sameInstance && !oldConnectionClosing) {
+                        return reject(
+                            ws,
+                            'Você já possui uma transmissão ativa. Encerre a transmissão anterior antes de iniciar outra.'
+                        )
+                    }
+
+                    unregisterPublisher(existingPublisher)
+                    existingPublisher.terminate()
+
+                    console.log('[WebRTC] Substituindo conexão anterior do publisher.')
                 }
+
+                ws.publisherInstanceId = instanceId
 
                 ws.discordUser = discordUser
                 ws.publisherAuthMethod = 'discord'
@@ -884,28 +945,8 @@ wss.on('connection', (ws, req) => {
             if(viewers.get(ws.viewerId) === ws){
                 viewers.delete(ws.viewerId)
             }
-        }else if(ws.role === 'publisher' && publishers.get(ws.streamId) === ws){
-            publishers.delete(ws.streamId)
-            streams.delete(ws.streamId)
-
-            console.log(`[WebRTC] Transmissão removida: ${ws.streamId}`)
-
-            for(const viewer of viewers.values()){
-                if(viewer.watchingStreamId !== ws.streamId) continue
-
-                viewer.watchingStreamId = null
-                viewer.negotiationId = null
-
-                send(viewer, {
-                    type: 'stream:ended',
-                    streamId: ws.streamId
-                })
-
-                send(viewer, {
-                    type: 'viewer:unwatched'
-                })
-            }
-            broadcastStreamList()
+        } else if (ws.role === 'publisher') {
+            unregisterPublisher(ws)
         }
     })
     ws.on('error', () => {})

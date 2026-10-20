@@ -18,6 +18,8 @@ let captureStream = null;
 let capturing = false;
 let iceServers = [];
 
+const publisherInstanceId = crypto.randomUUID()
+
 const USE_SFU = true
 
 let sfuSession = null
@@ -949,6 +951,7 @@ function connect(){
         ws.send(JSON.stringify({
             type: 'publisher:join',
             token,
+            instanceId: publisherInstanceId,
             mode: USE_SFU ? 'sfu' : 'p2p'
         }))
 
