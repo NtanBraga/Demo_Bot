@@ -316,85 +316,29 @@ export class SfuSession {
     }
 
     
-    replaceCaptureTracks(videoTrack, audioTrack = null) {
+        replaceVideoTrack(track) {
         return this.enqueueMedia(async () => {
-
             if (this.role !== 'publisher' || !this.transport) {
                 throw new Error('SFU publisher não preparado.')
             }
 
             if (
-                !videoTrack ||
-                videoTrack.kind !== 'video' ||
-                videoTrack.readyState !== 'live'
+                !track ||
+                track.kind !== 'video' ||
+                track.readyState !== 'live'
             ) {
                 throw new Error('Nova track de vídeo inválida.')
             }
 
-            if (
-                audioTrack &&
-                (
-                    audioTrack.kind !== 'audio' ||
-                    audioTrack.readyState !== 'live'
-                )
-            ) {
-                throw new Error('Nova track de áudio inválida.')
-            }
+            const producer = this.producers.get('video')
 
-            const videoProducer = this.producers.get('video')
-            const audioProducer = this.producers.get('audio') ?? null
-
-            if (!videoProducer || videoProducer.closed) {
+            if (!producer || producer.closed) {
                 throw new Error('Producer de vídeo indisponível.')
             }
 
-            if (audioProducer?.closed) {
-                throw new Error('Producer de áudio encerrado.')
-            }
+            await producer.replaceTrack({ track })
 
-            const previousAudioTrack = audioProducer?.track ?? null
-
-            let audioChanged = false
-
-            try {
-                if (audioProducer) {
-                    await audioProducer.replaceTrack({
-                        track: audioTrack ?? null
-                    })
-
-                    audioChanged = true
-                }
-
-                await videoProducer.replaceTrack({
-                    track: videoTrack
-                })
-
-            } catch (error) {
-
-                if (audioChanged && audioProducer && !audioProducer.closed) {
-                    try {
-                        await audioProducer.replaceTrack({
-                            track:
-                                previousAudioTrack?.readyState === 'live'
-                                    ? previousAudioTrack
-                                    : null
-                        })
-                    } catch (rollbackError) {
-                        console.error(
-                            '[SFU] Falha ao restaurar áudio:',
-                            rollbackError
-                        )
-                    }
-                }
-
-                throw error
-            }
-
-            return {
-                videoProducerId: videoProducer.id,
-                audioProducerId: audioProducer?.id ?? null,
-                audioActive: Boolean(audioProducer && audioTrack)
-            }
+            return producer.id
         })
     }
 

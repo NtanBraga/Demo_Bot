@@ -6,7 +6,7 @@ const discordStatus = document.querySelector('#publisher-discord-status')
 const connectButton = document.querySelector('#connect-webrtc');
 const startButton = document.querySelector('#start-webrtc');
 const stopButton = document.querySelector('#stop-webrtc');
-const audioMode = document.querySelector('#audio-mode');
+const audioCaptureStatus = document.querySelector('#audio-capture-status');
 const preview = document.querySelector('#preview-webrtc');
 const statusRTC = document.querySelector('#webrtc-status');
 const logBox = document.querySelector('#webrtc-logs');
@@ -15,6 +15,7 @@ let socket = null;
 let authenticated = false;
 let publisherStreamId = null
 let captureStream = null;
+let audioMixer = null
 let capturing = false;
 let switchingSource = false
 let iceServers = [];
@@ -76,7 +77,7 @@ sfuCodecWrapper.appendChild(sfuCodecSelect)
 
 sfuCodecWrapper.hidden = !USE_SFU
 
-audioMode.parentElement.insertAdjacentElement(
+audioCaptureStatus.insertAdjacentElement(
     'afterend',
     sfuCodecWrapper
 )
@@ -104,6 +105,141 @@ function log(message) {
 
     logBox.scrollTop = logBox.scrollHeight;
 }
+
+
+function getCaptureOptions() {
+    return {
+        video: {
+            frameRate: { ideal: 30, max: 30 },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+        },
+        audio: true,
+        systemAudio: 'include',
+        windowAudio: 'window'
+    }
+}
+
+function createAudioMixer() {
+    const AudioContextClass =
+        window.AudioContext || window.webkitAudioContext
+
+    if (!AudioContextClass) {
+        throw new Error('Web Audio API indisponível.')
+    }
+
+    const context = new AudioContextClass()
+    const destination = context.createMediaStreamDestination()
+
+    const silence = context.createConstantSource()
+    const silenceGain = context.createGain()
+
+    silenceGain.gain.value = 0
+
+    silence.connect(silenceGain)
+    silenceGain.connect(destination)
+    silence.start()
+
+    context.resume().catch(error => {
+        log('Não foi possível ativar o mixer: ' + error.message)
+    })
+
+    return {
+        context,
+        destination,
+        silence,
+        silenceGain,
+        inputNode: null,
+        inputTrack: null
+    }
+}
+
+function prepareAudioInput(mixer, stream) {
+    const track = stream.getAudioTracks().find(
+        item => item.readyState === 'live'
+    ) ?? null
+
+    const node = track
+        ? mixer.context.createMediaStreamSource(
+            new MediaStream([track])
+        )
+        : null
+
+    return { track, node }
+}
+
+function applyAudioInput(mixer, input) {
+    const previousNode = mixer.inputNode
+
+    previousNode?.disconnect()
+
+    try {
+        input.node?.connect(mixer.destination)
+    } catch (error) {
+        previousNode?.connect(mixer.destination)
+        throw error
+    }
+
+    mixer.inputNode = input.node
+    mixer.inputTrack = input.track
+
+    if (input.track) {
+        audioCaptureStatus.textContent =
+            'Áudio: fonte disponibilizada pelo navegador.'
+
+        log('Mixer: nova entrada de áudio conectada.')
+
+        input.track.addEventListener('ended', () => {
+            if (
+                audioMixer === mixer &&
+                mixer.inputTrack === input.track
+            ) {
+                audioCaptureStatus.textContent =
+                    'Áudio: fonte encerrada; enviando silêncio.'
+            }
+        }, { once: true })
+    } else {
+        audioCaptureStatus.textContent =
+            'Áudio: fonte sem áudio; enviando silêncio.'
+
+        log('Mixer: sem áudio na fonte atual.')
+    }
+}
+
+function closeAudioMixer(mixer) {
+    if (!mixer) return
+
+    mixer.inputNode?.disconnect()
+    mixer.silence.stop()
+    mixer.silence.disconnect()
+    mixer.silenceGain.disconnect()
+
+    for (const track of mixer.destination.stream.getTracks()) {
+        track.stop()
+    }
+
+    mixer.context.close().catch(error => {
+        console.warn('[AudioMixer] Falha ao fechar:', error)
+    })
+}
+
+function getPublicationStream(stream) {
+    const videoTrack = stream.getVideoTracks()[0]
+    const audioTrack =
+        audioMixer?.destination.stream.getAudioTracks()[0]
+
+    if (
+        !videoTrack ||
+        videoTrack.readyState !== 'live' ||
+        !audioTrack ||
+        audioTrack.readyState !== 'live'
+    ) {
+        throw new Error('Tracks de publicação indisponíveis.')
+    }
+
+    return new MediaStream([videoTrack, audioTrack])
+}
+
 
 async function verificarLoginDiscord() {
     try {
@@ -161,7 +297,6 @@ function updateButtons(){
     startButton.disabled = !authenticated || (USE_SFU && !sfuReady) || captureStream !== null || capturing
     stopButton.disabled = captureStream === null
     switchSourceButton.disabled = !authenticated || !USE_SFU || !sfuReady || !captureStream || capturing || switchingSource
-    audioMode.disabled = captureStream !== null || capturing
 
     sfuCodecSelect.disabled = !sfuReady || captureStream !== null || capturing
 
@@ -293,16 +428,30 @@ function closePeer(viewerId){
 
 function stopCapture(){
     const stream = captureStream
+    const previousMixer = audioMixer
 
     captureStream = null
+    audioMixer = null
+
+    let stopPromise = Promise.resolve()
 
     if (USE_SFU && sfuSession) {
         sfuSession.stopStats()
         sfuStatsBox.textContent = 'Transmissão parada.'
-        sfuSession.stopPublishing().catch(error => {
+
+        stopPromise = sfuSession.stopPublishing().catch(error => {
             log('Falha ao parar SFU: ' + error.message)
         })
     }
+
+    if (previousMixer) {
+        void stopPromise.finally(() => {
+            closeAudioMixer(previousMixer)
+        })
+    }
+
+    audioCaptureStatus.textContent = 'Áudio: aguardando compartilhamento.'
+
 
     if(stream && authenticated){
         send({
@@ -745,7 +894,7 @@ async function handleMessage(message){
                     log('SFU: restaurando a transmissão existente.')
 
                     await session.publish(
-                        streamToRestore,
+                        getPublicationStream(streamToRestore),
                         sfuCodecSelect.value
                     )
 
@@ -1023,27 +1172,17 @@ async function startCapture(){
     capturing = true
     updateButtons()
 
-    const mode = audioMode.value
-
-    const options = {
-        video: {
-            frameRate: { ideal: 30, max: 30},
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
-        },
-        audio: mode !== 'none',
-        systemAudio: mode === 'system' ? 'include' : 'exclude'
-    }
+    let provisionalMixer = null
 
     try{
 
-        if(mode === 'system'){
-            options.video.displaySurface = 'monitor'
-            options.systemAudio = 'include'
-            options.windowAudio = 'system'
+        if (USE_SFU) {
+            provisionalMixer = createAudioMixer()
         }
 
-        const stream = await navigator.mediaDevices.getDisplayMedia(options)
+        const stream = await navigator.mediaDevices.getDisplayMedia(
+            getCaptureOptions()
+        )
 
         if(!authenticated){
             stream.getTracks().forEach(track => track.stop())
@@ -1051,6 +1190,22 @@ async function startCapture(){
         }
 
         captureStream = stream
+
+        if (USE_SFU) {
+            audioMixer = provisionalMixer
+            provisionalMixer = null
+
+            applyAudioInput(
+                audioMixer,
+                prepareAudioInput(audioMixer, stream)
+            )
+        } else {
+            audioCaptureStatus.textContent =
+                stream.getAudioTracks().length > 0
+                    ? 'Áudio: capturado.'
+                    : 'Áudio: indisponível.'
+        }
+
 
         preview.srcObject = stream
 
@@ -1079,8 +1234,8 @@ async function startCapture(){
         log(`Captura iniciada: ` + `${settings.width}x${settings.height},` 
             + `áudio: ${audioTracks.length ? 'sim' : 'não'}.`)
 
-        if(mode !== 'none' && audioTracks.length === 0){
-            log('O navegador não forneceu audio.' + 'Verifique a opção de compartilhar audio.')
+        if (audioTracks.length === 0) {
+            log('O navegador não forneceu áudio. O mixer enviará silêncio.')
         }
 
         if (USE_SFU) {
@@ -1090,7 +1245,7 @@ async function startCapture(){
                 throw new Error('SFU ainda nao conectado')
             }
 
-            await session.publish(stream, sfuCodecSelect.value)
+            await session.publish(getPublicationStream(stream), sfuCodecSelect.value)
 
             if (
                 captureStream !== stream ||
@@ -1134,29 +1289,42 @@ async function startCapture(){
             await Promise.all([...viewers].map(openPeer))
         }
     }catch(e){
-        log(`Erro na captura: ${e.name || 'Error'} - ` + e.message)
+         if (e.name === 'NotReadableError' && /audio source/i.test(e.message)) {
+            log(
+                'Não foi possível iniciar o áudio do sistema. ' +
+                'Tente compartilhar a tela sem áudio ou verificar ' +
+                'o dispositivo de reprodução do Windows.'
+            )
+
+            statusRTC.textContent = 'Falha ao capturar áudio do sistema. Tente novamente sem áudio.'
+        } else {
+            log(`Erro na captura: ${e.name || 'Error'} - ${e.message}`)
+        }
+
         stopCapture()
     }finally{
+        if (provisionalMixer) closeAudioMixer(provisionalMixer)
         capturing = false
         updateButtons()
     }
 }
 
-async function switchCaptureSource() {
 
+async function switchCaptureSource() {
     if (
         !USE_SFU ||
         !authenticated ||
         !sfuReady ||
         !captureStream ||
         !sfuSession ||
+        !audioMixer ||
         capturing ||
         switchingSource
     ) return
 
     const previousStream = captureStream
     const session = sfuSession
-    const mode = audioMode.value
+    const mixer = audioMixer
 
     let nextStream = null
 
@@ -1166,45 +1334,23 @@ async function switchCaptureSource() {
     statusRTC.textContent = 'Escolhendo uma nova fonte...'
 
     try {
-        const options = {
-            video: {
-                frameRate: {
-                    ideal: 30,
-                    max: 30
-                },
-                width: {
-                    ideal: 1920
-                },
-                height: {
-                    ideal: 1080
-                }
-            },
-
-            audio: mode !== 'none',
-
-            systemAudio:
-                mode === 'system' ? 'include' : 'exclude'
-        }
-
-        if (mode === 'system') {
-            options.video.displaySurface = 'monitor'
-            options.windowAudio = 'system'
-        }
-
-        nextStream = await navigator.mediaDevices.getDisplayMedia(options)
+        nextStream = await navigator.mediaDevices.getDisplayMedia(
+            getCaptureOptions()
+        )
 
         const nextVideoTrack = nextStream.getVideoTracks()[0]
 
-        let nextAudioTrack = nextStream.getAudioTracks().find(
-                track => track.readyState === 'live'
-            ) ?? null
-
-        if (!nextVideoTrack || nextVideoTrack.readyState !== 'live') throw new Error('A nova fonte não disponibilizou vídeo.')
-        
+        if (
+            !nextVideoTrack ||
+            nextVideoTrack.readyState !== 'live'
+        ) {
+            throw new Error('Nova fonte sem vídeo válido.')
+        }
 
         if (
             captureStream !== previousStream ||
             sfuSession !== session ||
+            audioMixer !== mixer ||
             session.closed ||
             !authenticated ||
             !sfuReady
@@ -1213,38 +1359,54 @@ async function switchCaptureSource() {
             return
         }
 
-        nextVideoTrack.contentHint = ''
+        const nextAudioInput = prepareAudioInput(
+            mixer,
+            nextStream
+        )
 
-        const previousVideoProducerId = session.producers.get('video')?.id
+        const previousVideoTrack =
+            previousStream.getVideoTracks()[0]
 
-        const previousAudioProducerId = session.producers.get('audio')?.id ?? null
+        const previousVideoProducerId =
+            session.producers.get('video')?.id
 
-        const result = await session.replaceCaptureTracks(
-            nextVideoTrack,
-            nextAudioTrack
+        const previousAudioProducerId =
+            session.producers.get('audio')?.id
+
+        const videoProducerId = await session.replaceVideoTrack(
+            nextVideoTrack
         )
 
         if (
             captureStream !== previousStream ||
             sfuSession !== session ||
+            audioMixer !== mixer ||
             session.closed ||
             !authenticated ||
             !sfuReady
         ) {
-            log('A sessão mudou durante a troca.')
+            log('A sessão mudou durante a substituição.')
             return
         }
 
-        if (!result.audioProducerId && nextAudioTrack) {
-            nextStream.removeTrack(nextAudioTrack)
-            nextAudioTrack.stop()
-            nextAudioTrack = null
+        try {
+            applyAudioInput(mixer, nextAudioInput)
+        } catch (error) {
+            if (
+                previousVideoTrack?.readyState === 'live' &&
+                !session.closed
+            ) {
+                await session.replaceVideoTrack(
+                    previousVideoTrack
+                ).catch(rollbackError => {
+                    log(
+                        'Falha ao restaurar vídeo: ' +
+                        rollbackError.message
+                    )
+                })
+            }
 
-            log(
-                'A transmissão foi iniciada sem producer de áudio. ' +
-                'O vídeo foi alterado, mas o áudio não poderá ' +
-                'ser ativado até uma nova publicação.'
-            )
+            throw error
         }
 
         captureStream = nextStream
@@ -1269,37 +1431,45 @@ async function switchCaptureSource() {
             track.stop()
         }
 
+        const currentAudioProducerId =
+            session.producers.get('audio')?.id
+
         log('Fonte de captura alterada com sucesso.')
 
-        log('Producer de vídeo preservado: ' + (previousVideoProducerId === result.videoProducerId))
+        log(
+            'Producer de vídeo preservado: ' +
+            (previousVideoProducerId === videoProducerId)
+        )
 
-        if (previousAudioProducerId) {
-            log('Producer de áudio preservado: ' + (previousAudioProducerId === result.audioProducerId))
-        }
-
-        if (mode === 'none') {
-            log('Áudio: desativado pelo usuário.')
-
-        } else if (result.audioActive) {
-            log('Áudio: nova fonte conectada.')
-
-        } else {
-            log( 'Áudio: indisponível na nova fonte. ' + 'Transmitindo apenas vídeo.')
-        }
+        log(
+            'Producer de áudio preservado: ' +
+            (previousAudioProducerId === currentAudioProducerId)
+        )
 
         const settings = nextVideoTrack.getSettings()
 
-        log('Resolução atual: ' + `${settings.width ?? '?'}x${settings.height ?? '?'}`)
+        log(
+            'Resolução atual: ' +
+            `${settings.width ?? '?'}x${settings.height ?? '?'}`
+        )
 
-        statusRTC.textContent = 'Fonte alterada. Transmissão permanece ao vivo.'
+        statusRTC.textContent =
+            'Fonte alterada. Transmissão permanece ao vivo.'
 
     } catch (error) {
-
+        if (error.name === 'NotReadableError' && /audio source/i.test(error.message)) {
+            log(
+                'Não foi possível capturar o áudio da nova fonte. ' +
+                'A transmissão anterior foi mantida.'
+            )
+        }
         if (error.name === 'NotAllowedError' || error.name === 'AbortError') {
             log('Seleção da nova fonte cancelada.')
-
         } else {
-            log('Erro ao trocar fonte: ' + `${error.name || 'Error'} - ${error.message}`)
+            log(
+                'Erro ao trocar fonte: ' +
+                `${error.name || 'Error'} - ${error.message}`
+            )
         }
 
         if (captureStream === previousStream) {
@@ -1307,7 +1477,6 @@ async function switchCaptureSource() {
         }
 
     } finally {
-
         if (nextStream) {
             for (const track of nextStream.getTracks()) {
                 track.stop()
@@ -1318,6 +1487,7 @@ async function switchCaptureSource() {
         updateButtons()
     }
 }
+
 
 
 connectButton.addEventListener('click', connect)
