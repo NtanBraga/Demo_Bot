@@ -80,11 +80,49 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                     autoplay
                     muted
                     playsinline
-                    controls
                 ></video>
 
                 <div id="rtc-video-placeholder">
                     Selecione uma transmissão para assistir.
+                </div>
+
+                <span id="rtc-live-indicator">
+                    NÃO ESTÁ AO VIVO
+                </span>
+
+                <div id="rtc-video-toolbar" role="group"
+                    aria-label="Controles da transmissão">
+
+                    <button id="rtc-sound"
+                            type="button"
+                            title="Ativar som"
+                            disabled>
+                        🔇 Ativar som
+                    </button>
+
+                    <label id="rtc-volume-control" for="rtc-volume">
+                        Volume
+                        <input
+                            id="rtc-volume"
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value="100"
+                            disabled
+                        >
+                    </label>
+
+                    <output id="rtc-volume-value" for="rtc-volume">
+                        100%
+                    </output>
+
+                    <button id="rtc-fullscreen"
+                            type="button"
+                            title="Tela cheia"
+                            disabled>
+                        ⛶ Tela cheia
+                    </button>
                 </div>
             </div>
 
@@ -92,10 +130,6 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                 <span id="rtc-current-stream">
                     Nenhuma transmissão selecionada
                 </span>
-
-                <button id="rtc-sound" type="button" disabled>
-                    Ativar som
-                </button>
             </div>
         </div>
 
@@ -153,6 +187,11 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     const transmitButton = section.querySelector('#rtc-transmit');
     const soundButton = section.querySelector('#rtc-sound');
 
+    const volumeSlider = section.querySelector('#rtc-volume')
+    const volumeValue = section.querySelector('#rtc-volume-value')
+    const fullscreenButton = section.querySelector('#rtc-fullscreen')
+    const videoFrame = section.querySelector('#rtc-video-frame')
+
     const playerPanel = section.querySelector('#rtc-player-panel')
     const currentStream = section.querySelector('#rtc-current-stream')
     const playerState = section.querySelector('#rtc-player-state')
@@ -189,6 +228,10 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
     let sfuSession = null
     let sfuGrantRequested = false
+
+    const CONTROLS_HIDE_DELAY = 3000
+
+    let controlsHideTimer = null
 
     let sfuRetryTimer = null
     let sfuRetryAttempts = 0
@@ -289,6 +332,37 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
             label: 'Saindo',
             placeholder: 'Saindo da transmissão...'
         }
+    }
+
+    function hideVideoControls() {
+        clearTimeout(controlsHideTimer)
+        controlsHideTimer = null
+
+        videoFrame.classList.remove('controls-visible')
+    }
+
+    function scheduleControlsHide() {
+        clearTimeout(controlsHideTimer)
+
+        controlsHideTimer = setTimeout(() => {
+            controlsHideTimer = null
+
+            if (videoFrame.querySelector(':focus-visible')) {
+                return
+            }
+
+            videoFrame.classList.remove('controls-visible')
+        }, CONTROLS_HIDE_DELAY)
+    }
+
+    function showVideoControls() {
+        if (!playerPanel.classList.contains('is-playing')) {
+            return
+        }
+
+        videoFrame.classList.add('controls-visible')
+
+        scheduleControlsHide()
     }
 
     function setPlayerState(state) {
@@ -1003,18 +1077,75 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     }
 
     function updateButtons() {
-        connectButton.disabled = socket !== null || connectingSocket;
-        disconnectButton.disabled = socket === null;
+        connectButton.disabled =
+            socket !== null || connectingSocket
 
-        const hasAudio = remoteStream?.getAudioTracks().some(track => track.readyState === 'live');
+        disconnectButton.disabled = socket === null
 
-        soundButton.disabled = !hasAudio;
+        const hasAudio = Boolean(
+            remoteStream?.getAudioTracks().some(
+                track => track.readyState === 'live'
+            )
+        )
 
-        soundButton.textContent = video.muted ? 'Ativar som' : 'Silenciar';
+        const hasVideo = Boolean(
+            remoteStream?.getVideoTracks().some(
+                track => track.readyState === 'live'
+            )
+        )
+
+        soundButton.disabled = !hasAudio
+        volumeSlider.disabled = !hasAudio
+        fullscreenButton.disabled = !hasVideo
+
+        const isMuted = video.muted || video.volume === 0
+
+        soundButton.textContent = isMuted
+            ? '🔇 Ativar som'
+            : '🔊 Silenciar'
+
+        soundButton.title = isMuted
+            ? 'Ativar som'
+            : 'Silenciar'
+
+        const percentage = Math.round(video.volume * 100)
+
+        volumeSlider.value = String(percentage)
+        volumeValue.textContent = `${percentage}%`
     }
+
+    videoFrame.addEventListener('pointermove', event => {
+    if (event.pointerType === 'touch') return
+
+    showVideoControls()
+})
+
+    videoFrame.addEventListener('pointerleave', () => {
+        if (videoFrame.querySelector(':focus-visible')) return
+
+        hideVideoControls()
+    })
+
+    videoFrame.addEventListener('pointerdown', event => {
+        if (event.pointerType === 'touch') {
+            showVideoControls()
+        }
+    })
+
+    videoFrame.addEventListener('focusin', () => {
+        showVideoControls()
+    })
+
+    videoFrame.addEventListener('focusout', event => {
+        if (!videoFrame.contains(event.relatedTarget)) {
+            scheduleControlsHide()
+        }
+    })
+
 
     video.addEventListener('playing', () => {
         playerPanel.classList.add('is-playing')
+        showVideoControls()
 
         if(connection?.connectionState === 'connected' ||
             sfuSession?.transport?.connectionState === 'connected')
@@ -1024,7 +1155,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     })
     video.addEventListener('pause', () => {
         playerPanel.classList.remove('is-playing')
-
+        hideVideoControls()
         if(connection?.connectionState === 'connected' ||
             sfuSession?.transport?.connectionState === 'connected')
         {
@@ -2010,17 +2141,128 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     }
 
 
-    soundButton.addEventListener('click', async () => {
-        video.muted = !video.muted
+    
+soundButton.addEventListener('click', async () => {
+    if (soundButton.disabled) return
 
-        try{
+    const shouldUnmute = video.muted || video.volume === 0
+
+    if (shouldUnmute) {
+        if (video.volume === 0) {
+            video.volume = 0.5
+        }
+
+        video.muted = false
+
+        try {
             await video.play()
-        }catch(e){
-            log(`Erro de reprodução: ${e.message}`)
+        } catch (error) {
+            log(`Erro de reprodução: ${error.message}`)
             video.muted = true
         }
-        updateButtons()
-    })
+    } else {
+        video.muted = true
+    }
+
+    updateButtons()
+})
+
+volumeSlider.addEventListener('input', () => {
+    if (volumeSlider.disabled) return
+
+    const percentage = Number(volumeSlider.value)
+
+    video.volume = percentage / 100
+    video.muted = percentage === 0
+
+    if (!video.muted && video.paused) {
+        video.play().catch(error => {
+            log(`Erro ao reproduzir áudio: ${error.message}`)
+            video.muted = true
+        })
+    }
+
+    updateButtons()
+})
+
+function updateFullscreenButton() {
+    const expanded =
+        document.fullscreenElement === videoFrame ||
+        videoFrame.classList.contains('is-expanded')
+
+    fullscreenButton.textContent = expanded
+        ? '⤡ Reduzir'
+        : '⛶ Tela cheia'
+
+    fullscreenButton.title = expanded
+        ? 'Sair da tela cheia'
+        : 'Tela cheia'
+
+    fullscreenButton.setAttribute(
+        'aria-label',
+        expanded ? 'Sair da tela cheia' : 'Entrar em tela cheia'
+    )
+}
+
+async function togglePlayerFullscreen() {
+    if (document.fullscreenElement === videoFrame) {
+        try {
+            await document.exitFullscreen()
+        } catch (error) {
+            log(`Erro ao sair da tela cheia: ${error.message}`)
+        }
+        return
+    }
+
+    if (videoFrame.classList.contains('is-expanded')) {
+        videoFrame.classList.remove('is-expanded')
+        updateFullscreenButton()
+        return
+    }
+
+    try {
+        if (typeof videoFrame.requestFullscreen !== 'function') {
+            throw new Error('API de tela cheia indisponível.')
+        }
+
+        await videoFrame.requestFullscreen()
+
+    } catch (error) {
+        videoFrame.classList.add('is-expanded')
+
+        log(
+            'Tela cheia nativa indisponível. ' +
+            'Modo ampliado ativado.'
+        )
+    }
+
+    updateFullscreenButton()
+}
+
+fullscreenButton.addEventListener(
+    'click',
+    togglePlayerFullscreen
+)
+
+document.addEventListener(
+    'fullscreenchange',
+    updateFullscreenButton
+)
+
+document.addEventListener('keydown', event => {
+    if (
+        event.key === 'Escape' &&
+        videoFrame.classList.contains('is-expanded')
+    ) {
+        videoFrame.classList.remove('is-expanded')
+        updateFullscreenButton()
+    }
+})
+
+video.addEventListener('volumechange', updateButtons)
+
+updateFullscreenButton()
+
 
     codecAuto.addEventListener('change', () => {
         codecPreferences.automatic = codecAuto.checked
