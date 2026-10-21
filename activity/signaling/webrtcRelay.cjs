@@ -7,6 +7,7 @@ const { tratarTokenDiscord } = require('./discordSOAuth.cjs')
 const { tratarIdentidadeDiscord, consumirTicketIdentidade } = require('./discordIdentity.cjs')
 const { criarCredencialSFU } = require('./sfuAccess.cjs')
 const { tratarPublisherOAuth, getPublisherSession } = require('./publisherOAuth.cjs')
+const { tratarSessaoDemo, iniciarMonitoramentoDemo } = require("./demoLiveSession.cjs");
 
 const PORT = Number(process.env.WEBRTC_PORT || 3003)
 const PUBLISH_TOKEN = process.env.WEBRTC_PUBLISH_TOKEN
@@ -327,6 +328,10 @@ const server = http.createServer((req, res) => {
     if(req.url === '/api/identity'){
         void tratarIdentidadeDiscord(req, res)
         return
+    }
+    if (pathname === "/api/demo-session") {
+        void tratarSessaoDemo(req, res);
+        return;
     }
     if(req.method === 'GET' && req.url === '/health'){
         res.writeHead(200, {
@@ -977,3 +982,4 @@ server.listen(PORT, '127.0.0.1', () => {
         TURN_URLS.length ? 'configurado' : 'não configurado (apenas STUN)'
     }`)
 })
+iniciarMonitoramentoDemo();

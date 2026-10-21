@@ -113,6 +113,45 @@ async function obterTicketDiscord(){
   return result.ticket
 }
 
+async function registrarSessaoDemo(discordSDK) {
+
+    const instanceId = discordSDK.instanceId;
+    const guildId = discordSDK.guildId;
+
+    if (!guildId || !instanceId || !discordAccessToken) {
+        return;
+    }
+
+    const endpoint = window.location.hostname.endsWith(
+        ".discordsays.com"
+    )
+        ? "/.proxy/api/demo-session"
+        : "/api/demo-session";
+
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${discordAccessToken}`
+        },
+        cache: "no-store",
+        body: JSON.stringify({
+            instanceId
+        })
+    });
+
+    if (!response.ok) {
+        throw new Error(
+            `Falha ao registrar Demo Live: HTTP ${response.status}`
+        );
+    }
+
+    console.log(
+        "[Demo Live] Sessão comunicada ao backend:",
+        instanceId
+    );
+}
+
 async function iniciarActivity(){
   try{
 
@@ -131,8 +170,6 @@ async function iniciarActivity(){
 
     await discordSDK.ready()
 
-
-
     discordStatus.dataset.state = 'connecting'
     discordStatus.textContent = "Autenticando no Discord..."
 
@@ -148,6 +185,16 @@ async function iniciarActivity(){
 
       discordStatus.dataset.state = 'connected'
       discordStatus.textContent = "Discord conectado."
+
+      registrarSessaoDemo(discordSDK).catch(error => {
+          console.error("[Demo Live] Erro no registro:", error);
+      });
+
+      setInterval(() => {
+          registrarSessaoDemo(discordSDK).catch(error => {
+              console.error("[Demo Live] Erro ao renovar:", error);
+          });
+      }, 60_000);
 
       await montarParticipantesDiscord(participantsContainer, discordSDK)
     }catch(e){

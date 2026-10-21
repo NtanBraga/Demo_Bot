@@ -32,6 +32,10 @@ export default defineConfig(({mode}) => {
                 "/api/identity": {
                     target: 'http://127.0.0.1:3003',
                     changeOrigin: true
+                },
+                "/api/demo-session": {
+                    target: "http://127.0.0.1:3003",
+                    changeOrigin: true
                 }
             }
         },
