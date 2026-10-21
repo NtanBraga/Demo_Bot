@@ -78,7 +78,6 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                 <video
                     id="rtc-video"
                     autoplay
-                    muted
                     playsinline
                 ></video>
 
@@ -1114,6 +1113,37 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         volumeValue.textContent = `${percentage}%`
     }
 
+    async function tentarReproduzirVideo() {
+        try {
+            await video.play();
+            return true;
+
+        } catch (error) {
+
+            if (error.name !== "NotAllowedError" || video.muted) {
+                log(`Erro ao reproduzir vídeo: ${error.message}`);
+                return false;
+            }
+
+            log("Autoplay com áudio bloqueado pelo navegador.");
+
+            video.muted = true;
+            updateButtons();
+
+            try {
+                await video.play();
+
+                log("Vídeo iniciado sem áudio. Clique em Ativar som.");
+                return true;
+
+            } catch (fallbackError) {
+                log(`Falha na reprodução: ${fallbackError.message}`);
+                return false;
+            }
+        }
+    }
+
+
     videoFrame.addEventListener('pointermove', event => {
     if (event.pointerType === 'touch') return
 
@@ -1302,7 +1332,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
         video.pause();
         video.srcObject = null;
-        video.muted = true;
+        video.muted = false;
 
         codecCurrent.textContent = 'Codec recebido: aguardando transmissão.'
 
@@ -1542,7 +1572,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
         remoteStream = stream
         video.srcObject = stream
-        video.muted = true
+        video.muted = false
+        video.volume = 1
 
         pc.ontrack = event => {
             if(connection !== pc) return
@@ -1564,9 +1595,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
             updateButtons()
 
-            video.play().catch(error => {
-                log(`Autoplay: ${error.message}`)
-            })
+            void tentarReproduzirVideo()
         }
         pc.onicecandidate = event => {
             if(connection !== pc ||
@@ -1844,7 +1873,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                     remoteStream = media
 
                     video.srcObject = remoteStream
-                    video.muted = true
+                    video.muted = false
+                    video.volume = 1
 
                     const videoConsumer = session.consumers.get('video')
 
@@ -1874,24 +1904,17 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                     setPlayerState('connected')
                     updateButtons()
 
-                    video.play()
-                        .then(() => {
-                            if (
-                                sfuSession !== session ||
-                                selectedStreamId !== roomId
-                            ) return
+                    void tentarReproduzirVideo().then(iniciou => {
+                        if (
+                            sfuSession !== session ||
+                            selectedStreamId !== roomId
+                        ) return
 
+                        if (iniciou) {
                             log('Transmissao SFU iniciada pela Azure.')
                             setPlayerState('live')
-                        })
-                        .catch(error => {
-                            if (
-                                sfuSession !== session ||
-                                selectedStreamId !== roomId
-                            ) return
-
-                            log('Falha ao iniciar reprodução SFU: ' + error.message)
-                        })
+                        }
+                    })
                 } catch (error) {
                     log('Erro SFU: ' + error.message)
 
