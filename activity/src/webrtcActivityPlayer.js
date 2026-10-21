@@ -333,6 +333,76 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         }
     }
 
+    const AUDIO_STORAGE_KEY = 'demo_live:audio-preferences:v1'
+
+    const DEFAULT_AUDIO_PREFERENCES = {
+        muted: false,
+        volume: 1
+    }
+
+    function carregarPreferenciasAudio() {
+        try {
+            const saved = localStorage.getItem(AUDIO_STORAGE_KEY)
+
+            if (!saved) {
+                return { ...DEFAULT_AUDIO_PREFERENCES }
+            }
+
+            const data = JSON.parse(saved)
+
+            return {
+                muted: typeof data?.muted === 'boolean'
+                    ? data.muted
+                    : false,
+
+                volume: Number.isFinite(data?.volume)
+                    ? Math.max(0, Math.min(1, data.volume))
+                    : 1
+            }
+
+        } catch (error) {
+            console.warn(
+                '[Demo Live] Preferências de áudio indisponíveis:',
+                error
+            )
+
+            return { ...DEFAULT_AUDIO_PREFERENCES }
+        }
+    }
+
+    let audioPreferences = carregarPreferenciasAudio()
+
+    let muteTemporarioAutoplay = false
+    let revisaoAudio = 0
+
+    function salvarPreferenciasAudio() {
+        try {
+            localStorage.setItem(
+                AUDIO_STORAGE_KEY,
+                JSON.stringify(audioPreferences)
+            )
+
+        } catch (error) {
+            console.warn(
+                '[Demo Live] Não foi possível salvar o áudio:',
+                error
+            )
+        }
+    }
+
+    function aplicarPreferenciasAudio() {
+        video.volume = audioPreferences.volume
+
+        video.muted =
+            audioPreferences.muted ||
+            audioPreferences.volume === 0 ||
+            muteTemporarioAutoplay
+
+        updateButtons()
+    }
+
+
+
     function hideVideoControls() {
         clearTimeout(controlsHideTimer)
         controlsHideTimer = null
@@ -1114,31 +1184,47 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     }
 
     async function tentarReproduzirVideo() {
+        const streamInicial = video.srcObject
+        const revisaoInicial = revisaoAudio
+
+        if (!streamInicial) return false
+
         try {
-            await video.play();
-            return true;
+            await video.play()
+
+            return video.srcObject === streamInicial
 
         } catch (error) {
+            if (video.srcObject !== streamInicial || revisaoAudio !== revisaoInicial) return false
+            
 
-            if (error.name !== "NotAllowedError" || video.muted) {
-                log(`Erro ao reproduzir vídeo: ${error.message}`);
-                return false;
+            if (error.name !== 'NotAllowedError' || video.muted) {
+                log(`Erro ao reproduzir vídeo: ${error.message}`)
+                return false
             }
 
-            log("Autoplay com áudio bloqueado pelo navegador.");
+            log('Autoplay com áudio bloqueado pelo navegador.')
 
-            video.muted = true;
-            updateButtons();
+            muteTemporarioAutoplay = true
+            aplicarPreferenciasAudio()
 
             try {
-                await video.play();
+                await video.play()
 
-                log("Vídeo iniciado sem áudio. Clique em Ativar som.");
-                return true;
+                if (video.srcObject !== streamInicial) {
+                    return false
+                }
+
+                log('Vídeo iniciado sem áudio. Clique em Ativar som.')
+
+                return true
 
             } catch (fallbackError) {
-                log(`Falha na reprodução: ${fallbackError.message}`);
-                return false;
+                if (video.srcObject === streamInicial) {
+                    log(`Falha na reprodução: ${fallbackError.message}`)
+                }
+
+                return false
             }
         }
     }
@@ -1332,7 +1418,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
         video.pause();
         video.srcObject = null;
-        video.muted = false;
+        muteTemporarioAutoplay = false
+        aplicarPreferenciasAudio()
 
         codecCurrent.textContent = 'Codec recebido: aguardando transmissão.'
 
@@ -1572,8 +1659,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
         remoteStream = stream
         video.srcObject = stream
-        video.muted = false
-        video.volume = 1
+        muteTemporarioAutoplay = false
+        aplicarPreferenciasAudio()
 
         pc.ontrack = event => {
             if(connection !== pc) return
@@ -1873,8 +1960,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                     remoteStream = media
 
                     video.srcObject = remoteStream
-                    video.muted = false
-                    video.volume = 1
+                    muteTemporarioAutoplay = false
+                    aplicarPreferenciasAudio()
 
                     const videoConsumer = session.consumers.get('video')
 
@@ -2165,47 +2252,47 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
 
     
-soundButton.addEventListener('click', async () => {
+soundButton.addEventListener('click', () => {
     if (soundButton.disabled) return
 
-    const shouldUnmute = video.muted || video.volume === 0
+    const querAtivar = video.muted || video.volume === 0
 
-    if (shouldUnmute) {
-        if (video.volume === 0) {
-            video.volume = 0.5
+    if (querAtivar) {
+        if (audioPreferences.volume === 0) {
+            audioPreferences.volume = 0.5
         }
 
-        video.muted = false
+        audioPreferences.muted = false
 
-        try {
-            await video.play()
-        } catch (error) {
-            log(`Erro de reprodução: ${error.message}`)
-            video.muted = true
-        }
     } else {
-        video.muted = true
+        audioPreferences.muted = true
     }
 
-    updateButtons()
+    revisaoAudio++
+    muteTemporarioAutoplay = false
+
+    salvarPreferenciasAudio()
+    aplicarPreferenciasAudio()
+
+    if (querAtivar) void tentarReproduzirVideo()
+    
 })
 
 volumeSlider.addEventListener('input', () => {
     if (volumeSlider.disabled) return
 
-    const percentage = Number(volumeSlider.value)
+    audioPreferences.volume = Math.max(0,Math.min(1, Number(volumeSlider.value) / 100))
 
-    video.volume = percentage / 100
-    video.muted = percentage === 0
+    audioPreferences.muted = audioPreferences.volume === 0
 
-    if (!video.muted && video.paused) {
-        video.play().catch(error => {
-            log(`Erro ao reproduzir áudio: ${error.message}`)
-            video.muted = true
-        })
-    }
+    revisaoAudio++
+    muteTemporarioAutoplay = false
 
-    updateButtons()
+    salvarPreferenciasAudio()
+    aplicarPreferenciasAudio()
+
+    if (!video.muted && video.paused) void tentarReproduzirVideo()
+    
 })
 
 function updateFullscreenButton() {
@@ -2405,7 +2492,7 @@ updateFullscreenButton()
 
     window.addEventListener('pagehide', disconnect, { once: true })
 
-    updateButtons()
+    aplicarPreferenciasAudio()
     updateCodecControls()
 
     return {disconnect}
