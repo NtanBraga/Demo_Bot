@@ -212,15 +212,16 @@ async function tratarPublisherOAuth(req, res) {
         const expiration = pending.get(state)
 
         const validState = Boolean(
-            state &&
-            cookieState &&
-            state.length === cookieState.length &&
+            typeof state === 'string' &&
+            /^[A-Za-z0-9_-]{43}$/.test(state) &&
+            typeof cookieState === 'string' &&
+            /^[A-Za-z0-9_-]{43}$/.test(cookieState) &&
+            expiration &&
+            Date.now() < expiration &&
             crypto.timingSafeEqual(
                 Buffer.from(state),
                 Buffer.from(cookieState)
-            ) &&
-            expiration &&
-            Date.now() < expiration
+            )
         )
 
         if (

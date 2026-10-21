@@ -32,6 +32,7 @@ export class SfuSession {
         this.mediaQueue = Promise.resolve()
         this.keepAliveTimer = null
         this.keepAliveInFlight = false
+        this.keepAliveFailures = 0
     }
 
     request(type, data = {}) {
@@ -415,6 +416,8 @@ export class SfuSession {
     startKeepAlive() {
         this.stopKeepAlive()
 
+        this.keepAliveFailures = 0
+
         this.keepAliveTimer = setInterval(async () => {
             if (
                 this.closed ||
@@ -426,13 +429,28 @@ export class SfuSession {
 
             try {
                 await this.request('ping')
+
+                this.keepAliveFailures = 0
+
             } catch (error) {
                 if (!this.closed) {
+                    this.keepAliveFailures++
+
                     console.warn(
-                        '[SFU] Keepalive falhou:',
+                        `[SFU] Keepalive falhou ` +
+                        `(${this.keepAliveFailures}/3):`,
                         error.message
                     )
+
+                    if (this.keepAliveFailures >= 3) {
+                        this.close()
+
+                        this.onClose({
+                            reason: 'Sinalização SFU sem resposta.'
+                        })
+                    }
                 }
+
             } finally {
                 this.keepAliveInFlight = false
             }

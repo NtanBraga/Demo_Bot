@@ -32,6 +32,9 @@ const discordStatus = document.getElementById("discord-status")
 let discordAccessToken = null
 let discordAuthPromise = null
 
+let registroEmAndamento = false
+
+
 async function autenticarUsuario(discordSDK){
   console.log('[OAuth] Solicitando autorização')
 
@@ -115,41 +118,50 @@ async function obterTicketDiscord(){
 
 async function registrarSessaoDemo(discordSDK) {
 
+  if(registroEmAndamento) return
+
+  registroEmAndamento = true
+
+  try{
     const instanceId = discordSDK.instanceId;
     const guildId = discordSDK.guildId;
 
     if (!guildId || !instanceId || !discordAccessToken) {
-        return;
+      return;
     }
 
     const endpoint = window.location.hostname.endsWith(
-        ".discordsays.com"
+      ".discordsays.com"
     )
-        ? "/.proxy/api/demo-session"
-        : "/api/demo-session";
+      ? "/.proxy/api/demo-session"
+      : "/api/demo-session";
 
     const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${discordAccessToken}`
-        },
-        cache: "no-store",
-        body: JSON.stringify({
-            instanceId
-        })
+      method: "POST",
+      headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${discordAccessToken}`
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({
+          instanceId
+      })
     });
 
     if (!response.ok) {
-        throw new Error(
-            `Falha ao registrar Demo Live: HTTP ${response.status}`
-        );
+      throw new Error(
+        `Falha ao registrar Demo Live: HTTP ${response.status}`
+      );
     }
 
     console.log(
         "[Demo Live] Sessão comunicada ao backend:",
         instanceId
     );
+  }finally{
+    registroEmAndamento = false
+  }
 }
 
 async function iniciarActivity(){

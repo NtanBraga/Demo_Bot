@@ -312,25 +312,49 @@ function readCodecPreference(message){
     return { codecMode, codec }
 }
 
+function executarRota(handler, req, res) {
+    Promise.resolve()
+        .then(() => handler(req, res))
+        .catch(error => {
+            console.error(
+                '[HTTP] Erro inesperado:',
+                error
+            );
+
+            if (!res.headersSent) {
+                res.writeHead(500, {
+                    'Content-Type': 'application/json',
+                    'Cache-Control': 'no-store'
+                });
+
+                res.end(JSON.stringify({
+                    error: 'internal_server_error'
+                }));
+            } else if (!res.writableEnded) {
+                res.end();
+            }
+        });
+}
+
 const server = http.createServer((req, res) => {
     
     const pathname = new URL(req.url, 'http://localhost').pathname
 
     if (pathname.startsWith('/api/publisher/')) {
-        void tratarPublisherOAuth(req, res)
+        executarRota(tratarPublisherOAuth, req, res)
         return
     }
 
     if(req.url === '/api/token'){
-        void tratarTokenDiscord(req, res)
+        executarRota(tratarTokenDiscord, req, res)
         return
     }
     if(req.url === '/api/identity'){
-        void tratarIdentidadeDiscord(req, res)
+        executarRota(tratarIdentidadeDiscord, req, res)
         return
     }
     if (pathname === "/api/demo-session") {
-        void tratarSessaoDemo(req, res);
+        executarRota(tratarSessaoDemo, req, res)
         return;
     }
     if(req.method === 'GET' && req.url === '/health'){
@@ -641,7 +665,7 @@ wss.on('connection', (ws, req) => {
                     const token = criarCredencialSFU({
                         roomId: ws.streamId,
                         role: 'publisher',
-                        userId: '000000000000000000'
+                        userId: ws.discordUser.id
                     })
 
                     send(ws, {

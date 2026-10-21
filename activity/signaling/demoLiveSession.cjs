@@ -219,6 +219,10 @@ async function monitorarSessoes() {
                     instancia.users.length === 0;
 
                 if (encerrada) {
+                    if (sessoes.get(instanceId) !== sessao) {
+                        continue;
+                    }
+
                     sessoes.delete(instanceId);
 
                     console.log(
@@ -227,7 +231,7 @@ async function monitorarSessoes() {
 
                     await avisarBlinBlin("end", sessao);
                     continue;
-                }
+                }   
 
                 await avisarBlinBlin("start", sessao);
 
