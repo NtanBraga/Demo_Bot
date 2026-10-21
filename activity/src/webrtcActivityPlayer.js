@@ -232,6 +232,16 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
     let controlsHideTimer = null
 
+    const touchControls = window.matchMedia(
+        '(hover: none) and (pointer: coarse)'
+    )
+    function isMobileFullscreen() {
+        return touchControls.matches && (
+            document.fullscreenElement === videoFrame ||
+            videoFrame.classList.contains('is-expanded')
+        )
+    }
+
     let sfuRetryTimer = null
     let sfuRetryAttempts = 0
 
@@ -407,20 +417,42 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         clearTimeout(controlsHideTimer)
         controlsHideTimer = null
 
+        if (
+            touchControls.matches &&
+            !isMobileFullscreen() &&
+            playerPanel.classList.contains('is-playing')
+        ) {
+            videoFrame.classList.add('controls-visible')
+            return
+        }
+
         videoFrame.classList.remove('controls-visible')
     }
 
     function scheduleControlsHide() {
         clearTimeout(controlsHideTimer)
+        controlsHideTimer = null
+
+        if (touchControls.matches && !isMobileFullscreen()) {
+            if (playerPanel.classList.contains('is-playing')) {
+                videoFrame.classList.add('controls-visible')
+            }
+
+            return
+        }
 
         controlsHideTimer = setTimeout(() => {
             controlsHideTimer = null
 
-            if (videoFrame.querySelector(':focus-visible')) {
+            if (
+                !touchControls.matches &&
+                videoFrame.querySelector(':focus-visible')
+            ) {
                 return
             }
 
             videoFrame.classList.remove('controls-visible')
+
         }, CONTROLS_HIDE_DELAY)
     }
 
@@ -1236,7 +1268,9 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     showVideoControls()
 })
 
-    videoFrame.addEventListener('pointerleave', () => {
+    videoFrame.addEventListener('pointerleave', event => {
+        if (event.pointerType === 'touch') return
+
         if (videoFrame.querySelector(':focus-visible')) return
 
         hideVideoControls()
@@ -2312,6 +2346,13 @@ function updateFullscreenButton() {
         'aria-label',
         expanded ? 'Sair da tela cheia' : 'Entrar em tela cheia'
     )
+
+    if (
+        touchControls.matches &&
+        playerPanel.classList.contains('is-playing')
+    ) {
+        showVideoControls()
+    }
 }
 
 async function togglePlayerFullscreen() {

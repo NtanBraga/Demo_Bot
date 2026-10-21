@@ -97,7 +97,6 @@
 }
 
 .demo-live-player button,
-.demo-live-player #rtc-key,
 .demo-live-player select {
     min-height: 38px;
     padding: 8px 10px;
@@ -116,7 +115,6 @@
     cursor: not-allowed;
     opacity: 0.5;
 }
-.demo-live-player #rtc-key,
 .demo-live-player select {
     background: #222938;
     color: #f1f5f9;
@@ -723,11 +721,6 @@
     min-width: 0;
 }
 
-.rtc-connect-fields #rtc-key {
-    flex: 1 1 180px;
-    min-width: 0;
-}
-
 .rtc-connect-actions {
     display: flex;
     flex-direction: column;
@@ -859,14 +852,6 @@
     margin-left: auto;
 }
 
-
-.demo-live-player #rtc-player-panel:not(.is-playing)
-#rtc-video-toolbar {
-    opacity: 0.5;
-    pointer-events: none;
-}
-
-
 .demo-live-player #rtc-video-frame:fullscreen {
     border-radius: 0;
     aspect-ratio: auto;
@@ -886,33 +871,40 @@
     background: #000;
 }
 
-.demo-live-player #rtc-video-toolbar {
+/* Indicador e controles compartilham o mesmo estado */
+
+.demo-live-player #rtc-video-frame
+:is(#rtc-video-toolbar, #rtc-live-indicator) {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
 
+    transition:
+        opacity 0.25s ease,
+        visibility 0.25s ease;
+}
+
+.demo-live-player #rtc-video-toolbar {
     transform: translateY(10px);
 
     transition:
         opacity 0.25s ease,
-        transform 0.25s ease,
-        visibility 0.25s ease;
+        visibility 0.25s ease,
+        transform 0.25s ease;
 }
 
+.demo-live-player #rtc-player-panel.is-playing
+#rtc-video-frame.controls-visible
+:is(#rtc-video-toolbar, #rtc-live-indicator) {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
 
 .demo-live-player #rtc-player-panel.is-playing
 #rtc-video-frame.controls-visible
 #rtc-video-toolbar {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-
-    transform: translateY(0);
-}
-
-.demo-live-player #rtc-video-frame:focus-within
-#rtc-video-toolbar {
-    visibility: visible;
+    transform: none;
 }
 
 .demo-live-player #rtc-player-panel.is-playing
@@ -923,8 +915,16 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .demo-live-player #rtc-video-toolbar {
+    .demo-live-player
+    #rtc-video-toolbar,
+    .demo-live-player
+    #rtc-live-indicator {
         transition: none;
+    }
+
+    .demo-live-player
+    #rtc-player-state::before {
+        animation: none;
     }
 }
 
@@ -944,53 +944,162 @@
         font-size: 11px;
     }
 }
-
-
 @media (max-width: 560px) {
-    .demo-live-player > .rtc-connect-controls {
-        grid-template-columns: minmax(0, 1fr);
-    }
-
-    .rtc-connect-fields {
+    .demo-live-player .rtc-connect-fields {
         flex-direction: column;
         align-items: stretch;
     }
+    .demo-live-player .rtc-connect-fields > button {
+        flex: 0 0 auto;
+        width: 100%;
+    }
+}
 
-    .rtc-connect-fields #rtc-key {
-        flex: none;
+/*Estilo mobile*/
+
+@media (max-width: 1024px) {
+    .demo-live-player {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 12px;
+    }
+
+    .demo-live-player > h3 {
+        order: 0;
+    }
+
+    .demo-live-player > #rtc-status {
+        order: 1;
+    }
+
+    .demo-live-player > .rtc-connect-controls {
+        order: 2;
+        grid-template-columns: minmax(0, 1fr);
+        margin-bottom: 0;
+    }
+
+    .demo-live-player > #rtc-player-panel {
+        order: 3;
+    }
+
+    .demo-live-player > #rtc-stream-catalog {
+        order: 4;
+    }
+
+    .demo-live-player > #rtc-codec-settings {
+        order: 5;
+    }
+
+    .demo-live-player > #rtc-diagnostics {
+        order: 6;
+    }
+
+    .demo-live-player .rtc-connect-actions {
         width: 100%;
     }
 
-    .rtc-connect-actions {
-        width: 140px;
-        justify-self: end;
+    .demo-live-player button {
+        min-height: 44px;
+        touch-action: manipulation;
+    }
+
+    .demo-live-player #rtc-video-frame {
+        display: flex;
+        flex-direction: column;
+        aspect-ratio: auto;
+        overflow: visible;
+    }
+
+    .demo-live-player #rtc-video {
+        width: 100%;
+        height: auto;
+        aspect-ratio: 16 / 9;
+        object-fit: contain;
+    }
+
+    .demo-live-player #rtc-video-placeholder {
+        bottom: auto;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+    }
+
+    .demo-live-player #rtc-video-toolbar {
+        position: static;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        padding: 10px;
+        background: #222938;
+        border-radius: 0 0 12px 12px;
+    }
+
+    .demo-live-player #rtc-volume-control {
+        flex: 1 1 120px;
+        min-width: 0;
+    }
+
+    .demo-live-player #rtc-volume {
+        width: 100%;
+        min-width: 65px;
+    }
+
+    .demo-live-player #rtc-fullscreen {
+        margin-left: 0;
+    }
+
+    .demo-live-player #rtc-stream-list {
+        max-height: none;
+        overflow: visible;
+    }
+
+    .demo-live-player #rtc-video-frame:fullscreen,
+    .demo-live-player #rtc-video-frame.is-expanded {
+        aspect-ratio: auto;
+        overflow: hidden;
+    }
+
+    .demo-live-player #rtc-video-frame:fullscreen #rtc-video,
+    .demo-live-player #rtc-video-frame.is-expanded #rtc-video {
+        flex: 1 1 auto;
+        height: 100%;
+        min-height: 0;
+        aspect-ratio: auto;
     }
 }
 
-@media (prefers-reduced-motion: reduce) {
-    .demo-live-player #rtc-player-state::before {
-        animation: none;
+@media (max-width: 1024px) and (pointer: coarse) {
+    .demo-live-player #rtc-transmit {
+        display: none;
     }
 }
+@media (hover: none) and (pointer: coarse) {
 
-@media (max-width: 800px){
-    .demo-live-player{
-        grid-template-columns: repeat(12, minmax(0, 1fr));
-        padding: 12px;
-    }
-    .demo-live-player #rtc-key{
-        grid-column: 1 / -1;
-    }
-    .demo-live-player #rtc-connect,
-    .demo-live-player #rtc-disconnect{
-        grid-column: span 6;
+    .demo-live-player #rtc-player-panel.is-playing
+    #rtc-video-frame:not(:fullscreen):not(.is-expanded)
+    :is(#rtc-video-toolbar, #rtc-live-indicator) {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
     }
 
-    .demo-live-player #rtc-stream-catalog,
-    .demo-live-player #rtc-player-panel,
-    .demo-live-player #rtc-codec-settings,
-    .demo-live-player #rtc-diagnostics {
-        grid-column:  1 / -1;
-        grid-row: auto;
+    .demo-live-player
+    #rtc-video-frame:is(:fullscreen, .is-expanded)
+    #rtc-video-toolbar {
+        position: absolute;
+
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 5;
+
+        padding: 22px 14px 12px;
+
+        background: linear-gradient(
+            to top,
+            rgba(0, 0, 0, 0.92),
+            rgba(0, 0, 0, 0.60) 60%,
+            transparent
+        );
     }
 }
