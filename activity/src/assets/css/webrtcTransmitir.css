@@ -408,3 +408,196 @@ select:focus-visible {
         font-size: 23px;
     }
 }
+
+/* Dashboard de monitoramento do SFU */
+
+.sfu-monitor-dashboard {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    margin-top: 16px;
+}
+
+.sfu-monitor-dashboard[hidden],
+#sfu-monitor-data[hidden] {
+    display: none !important;
+}
+
+.sfu-monitor-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.sfu-monitor-group h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.sfu-monitor-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.sfu-monitor-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    min-width: 0;
+    padding: 16px;
+
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 12px;
+
+    background: rgba(25, 30, 43, 0.65);
+}
+
+.sfu-monitor-card__label {
+    color: #aeb7c8;
+    font-size: 12px;
+}
+
+.sfu-monitor-card__value {
+    color: #fff;
+    font-size: 24px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.sfu-monitor-card__detail {
+    color: #9ca3af;
+    font-size: 11px;
+}
+
+.sfu-monitor-track {
+    width: 100%;
+    height: 7px;
+
+    overflow: hidden;
+    border-radius: 999px;
+
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.sfu-monitor-fill {
+    height: 100%;
+    width: 0%;
+
+    border-radius: inherit;
+    background: #5865f2;
+
+    transition: width 0.35s ease;
+}
+
+@media (max-width: 580px) {
+    .sfu-monitor-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .sfu-monitor-card {
+        padding: 12px;
+    }
+
+    .sfu-monitor-card__value {
+        font-size: 21px;
+    }
+}
+
+/* Histórico de desempenho do servidor SFU */
+
+.sfu-monitor-history {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+
+    margin-top: 24px;
+}
+
+.sfu-monitor-history[hidden] {
+    display: none !important;
+}
+
+.sfu-monitor-history h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.sfu-history-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.sfu-history-card {
+    min-width: 0;
+    padding: 16px;
+
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 12px;
+
+    background: rgba(25, 30, 43, 0.65);
+}
+
+.sfu-history-card h4 {
+    margin: 0 0 12px;
+    color: #fff;
+    font-size: 13px;
+}
+
+.sfu-history-card canvas {
+    display: block;
+    width: 100%;
+    height: 180px;
+}
+
+.sfu-history-card small {
+    display: block;
+    margin-top: 10px;
+
+    color: #aeb7c8;
+    font-size: 11px;
+}
+
+@media (max-width: 780px) {
+    .sfu-history-grid {
+        grid-template-columns: 1fr;
+    }
+}
+/* Histórico de eventos SFU */
+
+.sfu-events-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    max-height: 300px;
+    overflow-y: auto;
+
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.sfu-events-list li {
+    padding: 10px 12px;
+
+    color: #cbd5e1;
+    font-size: 12px;
+    line-height: 1.5;
+
+    background: rgba(255, 255, 255, 0.04);
+    border-left: 3px solid #5865f2;
+    border-radius: 6px;
+}
+
+.sfu-events-list li[data-level="warning"] {
+    border-left-color: #f59e0b;
+}
+
+.sfu-events-list li[data-level="error"] {
+    border-left-color: #ef4444;
+}

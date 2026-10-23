@@ -10,6 +10,12 @@ const audioCaptureStatus = document.querySelector('#audio-capture-status');
 const preview = document.querySelector('#preview-webrtc');
 const statusRTC = document.querySelector('#webrtc-status');
 const logBox = document.querySelector('#webrtc-logs');
+const sfuMonitorPanel = document.querySelector('#sfu-monitor')
+const sfuMonitorStatus = document.querySelector('#sfu-monitor-status')
+const sfuMonitorData = document.querySelector('#sfu-monitor-data')
+const sfuMonitorDashboard = document.querySelector('#sfu-monitor-dashboard')
+const sfuMonitorHistory = document.querySelector('#sfu-monitor-history')
+
 
 let socket = null;
 let authenticated = false;
@@ -26,6 +32,18 @@ const USE_SFU = true
 
 let sfuSession = null
 let sfuReady = false
+
+const SFU_MONITOR_INTERVAL = 5000
+
+const SFU_HISTORY_WINDOW_MS = 5 * 60 * 1000
+const SFU_HISTORY_MAX_SAMPLES = 61
+
+let sfuHistory = []
+let sfuHistoryInstance = null
+
+let sfuMonitorTimer = null
+let sfuMonitorBusy = false
+let sfuMonitorDeniedSession = null
 
 let cachedPublisherToken = null
 let pendingPublisherToken = null
@@ -105,6 +123,585 @@ function log(message) {
 
     logBox.scrollTop = logBox.scrollHeight;
 }
+
+function formatarPercentual(value) {
+    return Number.isFinite(value)
+        ? `${value.toFixed(1)}%`
+        : 'Coletando...'
+}
+
+function formatarMemoria(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 0) {
+        return 'Indisponível'
+    }
+
+    const gib = 1024 ** 3
+    const mib = 1024 ** 2
+
+    if (bytes >= gib) {
+        return `${(bytes / gib).toFixed(2)} GiB`
+    }
+
+    return `${(bytes / mib).toFixed(1)} MiB`
+}
+
+
+function criarCartaoSFU(label, value, percent = null, detail = '') {
+    const card = document.createElement('article')
+    card.className = 'sfu-monitor-card'
+
+    const title = document.createElement('span')
+    title.className = 'sfu-monitor-card__label'
+    title.textContent = label
+
+    const number = document.createElement('strong')
+    number.className = 'sfu-monitor-card__value'
+    number.textContent = value
+
+    card.append(title, number)
+
+    if (Number.isFinite(percent)) {
+        const track = document.createElement('div')
+        track.className = 'sfu-monitor-track'
+
+        const fill = document.createElement('div')
+        fill.className = 'sfu-monitor-fill'
+
+        const safePercent = Math.max(
+            0,
+            Math.min(100, percent)
+        )
+
+        fill.style.width = `${safePercent}%`
+
+        track.appendChild(fill)
+        card.appendChild(track)
+    }
+
+    if (detail) {
+        const description = document.createElement('small')
+        description.className = 'sfu-monitor-card__detail'
+        description.textContent = detail
+
+        card.appendChild(description)
+    }
+
+    return card
+}
+
+function criarGrupoSFU(title, cards) {
+    const section = document.createElement('section')
+    section.className = 'sfu-monitor-group'
+
+    const heading = document.createElement('h3')
+    heading.textContent = title
+
+    const grid = document.createElement('div')
+    grid.className = 'sfu-monitor-grid'
+
+    grid.append(...cards)
+    section.append(heading, grid)
+
+    return section
+}
+
+
+function criarHistoricoEventosSFU(events) {
+    const section = document.createElement('section')
+    section.className = 'sfu-monitor-group'
+
+    const heading = document.createElement('h3')
+    heading.textContent = 'Eventos recentes do SFU'
+
+    const list = document.createElement('ul')
+    list.className = 'sfu-events-list'
+
+    const items = Array.isArray(events) ? events : []
+
+    if (items.length === 0) {
+        const empty = document.createElement('li')
+        empty.textContent = 'Nenhum evento registrado.'
+        list.appendChild(empty)
+    }
+
+    for (const event of items) {
+        const item = document.createElement('li')
+
+        const level = ['info', 'warning', 'error']
+            .includes(event.level)
+            ? event.level
+            : 'info'
+
+        item.dataset.level = level
+
+        const time = new Date(event.timestamp)
+            .toLocaleTimeString('pt-BR')
+
+        item.textContent = `${time} — ${event.message}`
+
+        list.appendChild(item)
+    }
+
+    section.append(heading, list)
+
+    return section
+}
+
+
+function renderizarDashboardSFU(stats) {
+    const vm = stats.vm ?? {}
+    const memory = vm.memory ?? {}
+    const node = stats.node ?? {}
+    const connections = stats.connections ?? {}
+
+    const workers = Array.isArray(stats.workers)
+        ? stats.workers
+        : []
+
+    const vmCards = [
+        criarCartaoSFU(
+            'CPU da VM',
+            formatarPercentual(vm.cpuPercent),
+            vm.cpuPercent,
+            `${vm.cpuCount ?? '—'} vCPUs`
+        ),
+
+        criarCartaoSFU(
+            'RAM da VM',
+            formatarPercentual(memory.usagePercent),
+            memory.usagePercent,
+            `${formatarMemoria(memory.usedBytes)} / ` +
+            formatarMemoria(memory.totalBytes)
+        )
+    ]
+
+    const nodeCards = [
+        criarCartaoSFU(
+            'CPU Node.js',
+            formatarPercentual(node.cpuPercent),
+            node.cpuPercent,
+            `PID ${node.pid ?? '—'}`
+        ),
+
+        criarCartaoSFU(
+            'RAM Node.js',
+            formatarMemoria(node.rssBytes)
+        )
+    ]
+
+    const workerCards = workers.map((worker, index) =>
+        criarCartaoSFU(
+            `Worker ${index + 1} — PID ${worker.pid}`,
+            formatarPercentual(worker.cpuPercent),
+            worker.cpuPercent,
+            `RAM: ${formatarMemoria(worker.rssBytes)} · ` +
+            `Salas: ${worker.rooms ?? 0}`
+        )
+    )
+
+    if (workerCards.length === 0) {
+        workerCards.push(
+            criarCartaoSFU('Workers', 'Nenhum ativo')
+        )
+    }
+
+    const connectionCards = [
+        criarCartaoSFU('Salas', String(connections.rooms ?? 0)),
+        criarCartaoSFU('Transmissores', String(connections.publishers ?? 0)),
+        criarCartaoSFU('Espectadores', String(connections.viewers ?? 0)),
+        criarCartaoSFU('Transports', String(connections.transports ?? 0)),
+        criarCartaoSFU('Producers', String(connections.producers ?? 0)),
+        criarCartaoSFU('Consumers', String(connections.consumers ?? 0))
+    ]
+
+    sfuMonitorDashboard.replaceChildren(
+        criarGrupoSFU('Máquina virtual Azure', vmCards),
+        criarGrupoSFU('Processo Node.js', nodeCards),
+        criarGrupoSFU(
+            `Workers mediasoup (${stats.workerCount ?? workers.length})`,
+            workerCards
+        ),
+        criarGrupoSFU('Conexões WebRTC', connectionCards),
+        criarHistoricoEventosSFU(stats.events)
+    )
+
+    sfuMonitorData.hidden = true
+    sfuMonitorDashboard.hidden = false
+}
+
+
+function registrarHistoricoSFU(stats) {
+    const workers = Array.isArray(stats.workers)
+        ? stats.workers
+        : []
+
+    const instance = [
+        stats.node?.pid,
+        ...workers.map(worker => worker.pid)
+    ].join(':')
+
+    if (
+        sfuHistoryInstance !== null &&
+        sfuHistoryInstance !== instance
+    ) {
+        sfuHistory = []
+    }
+
+    sfuHistoryInstance = instance
+
+    const workerCpuValues = workers
+        .map(worker => worker.cpuPercent)
+        .filter(Number.isFinite)
+
+    const workerMemoryValues = workers
+        .map(worker => worker.rssBytes)
+        .filter(Number.isFinite)
+
+    const workerCpu = workerCpuValues.length
+        ? workerCpuValues.reduce((sum, value) => sum + value, 0)
+        : null
+
+    const workerMemory = workerMemoryValues.length
+        ? workerMemoryValues.reduce((sum, value) => sum + value, 0)
+        : null
+
+    const toMiB = bytes =>
+        Number.isFinite(bytes)
+            ? bytes / (1024 ** 2)
+            : null
+
+    sfuHistory.push({
+        time: Date.now(),
+
+        vmCpu: stats.vm?.cpuPercent ?? null,
+        vmMemory: stats.vm?.memory?.usagePercent ?? null,
+
+        nodeCpu: stats.node?.cpuPercent ?? null,
+        workerCpu,
+
+        nodeMemory: toMiB(stats.node?.rssBytes),
+        workerMemory: toMiB(workerMemory)
+    })
+
+    const cutoff = Date.now() - SFU_HISTORY_WINDOW_MS
+
+    sfuHistory = sfuHistory.filter(sample =>
+        sample.time >= cutoff
+    )
+
+    if (sfuHistory.length > SFU_HISTORY_MAX_SAMPLES) {
+        sfuHistory = sfuHistory.slice(
+            -SFU_HISTORY_MAX_SAMPLES
+        )
+    }
+}
+
+
+function desenharGraficoSFU(canvasId, series, maxY, unit = '') {
+    const canvas = document.getElementById(canvasId)
+    if (!canvas) return
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const width = Math.max(
+        250,
+        Math.round(canvas.getBoundingClientRect().width)
+    )
+
+    const height = 180
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+
+    canvas.width = Math.round(width * dpr)
+    canvas.height = Math.round(height * dpr)
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, width, height)
+
+    const left = 44
+    const right = 12
+    const top = 12
+    const bottom = 24
+
+    const graphWidth = width - left - right
+    const graphHeight = height - top - bottom
+
+    ctx.font = '11px sans-serif'
+    ctx.lineWidth = 1
+
+    for (let i = 0; i <= 4; i++) {
+        const y = top + (graphHeight / 4) * i
+        const value = maxY * (1 - i / 4)
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.12)'
+        ctx.beginPath()
+        ctx.moveTo(left, y)
+        ctx.lineTo(width - right, y)
+        ctx.stroke()
+
+        ctx.fillStyle = '#9ca3af'
+        ctx.fillText(
+            `${Math.round(value)}${unit}`,
+            2,
+            y + 4
+        )
+    }
+
+    const latestTime = sfuHistory.at(-1)?.time ?? Date.now()
+    const startTime = latestTime - SFU_HISTORY_WINDOW_MS
+
+    ctx.fillStyle = '#9ca3af'
+    ctx.fillText('-5 min', left, height - 5)
+    ctx.fillText('Agora', width - 45, height - 5)
+
+    for (const serie of series) {
+        ctx.beginPath()
+
+        let drawing = false
+        let lastPoint = null
+
+        for (const sample of sfuHistory) {
+            const value = sample[serie.key]
+
+            if (!Number.isFinite(value)) {
+                drawing = false
+                continue
+            }
+
+            const x = left +
+                ((sample.time - startTime) / SFU_HISTORY_WINDOW_MS) *
+                graphWidth
+
+            const y = top +
+                (1 - Math.max(0, Math.min(value, maxY)) / maxY) *
+                graphHeight
+
+            if (!drawing) {
+                ctx.moveTo(x, y)
+                drawing = true
+            } else {
+                ctx.lineTo(x, y)
+            }
+
+            lastPoint = { x, y }
+        }
+
+        ctx.strokeStyle = serie.color
+        ctx.lineWidth = 2
+        ctx.stroke()
+
+        if (lastPoint) {
+            ctx.beginPath()
+            ctx.arc(lastPoint.x, lastPoint.y, 3, 0, Math.PI * 2)
+            ctx.fillStyle = serie.color
+            ctx.fill()
+        }
+    }
+}
+
+function renderizarGraficosSFU() {
+    if (sfuHistory.length === 0) return
+
+    const maxHistorico = (...keys) =>
+        Math.max(
+            0,
+            ...sfuHistory.flatMap(sample =>
+                keys.map(key =>
+                    Number.isFinite(sample[key])
+                        ? sample[key]
+                        : 0
+                )
+            )
+        )
+
+    const maxProcessCpu = Math.max(
+        100,
+        Math.ceil(maxHistorico('nodeCpu', 'workerCpu') / 25) * 25
+    )
+
+    const maxProcessMemory = Math.max(
+        64,
+        Math.ceil(
+            maxHistorico('nodeMemory', 'workerMemory') * 1.15 / 64
+        ) * 64
+    )
+
+    desenharGraficoSFU(
+        'sfu-chart-vm-cpu',
+        [{ key: 'vmCpu', color: '#5865f2' }],
+        100,
+        '%'
+    )
+
+    desenharGraficoSFU(
+        'sfu-chart-vm-memory',
+        [{ key: 'vmMemory', color: '#5865f2' }],
+        100,
+        '%'
+    )
+
+    desenharGraficoSFU(
+        'sfu-chart-process-cpu',
+        [
+            { key: 'nodeCpu', color: '#60a5fa' },
+            { key: 'workerCpu', color: '#4ade80' }
+        ],
+        maxProcessCpu,
+        '%'
+    )
+
+    desenharGraficoSFU(
+        'sfu-chart-process-memory',
+        [
+            { key: 'nodeMemory', color: '#60a5fa' },
+            { key: 'workerMemory', color: '#4ade80' }
+        ],
+        maxProcessMemory,
+        'M'
+    )
+}
+
+async function atualizarMonitorSFU() {
+    if (
+        !sfuMonitorPanel.open ||
+        closingPage ||
+        sfuMonitorBusy
+    ) return
+
+    const session = sfuSession
+
+    if (!sfuReady || !session || session.closed) {
+
+        sfuMonitorDashboard.hidden = true
+        sfuMonitorData.hidden = false
+
+        sfuMonitorHistory.hidden = true
+
+        sfuMonitorStatus.textContent = 'Aguardando conexão com o SFU...'
+
+        sfuMonitorData.textContent = 'Conecte a sinalização para consultar a Azure.'
+
+        return
+    }
+
+    if (sfuMonitorDeniedSession === session) return
+
+    sfuMonitorBusy = true
+
+    try {
+        const stats = await session.request('monitor:stats')
+
+        if (
+            session !== sfuSession ||
+            !sfuMonitorPanel.open ||
+            closingPage
+        ) return
+
+        const vm = stats.vm ?? {}
+        const memory = vm.memory ?? {}
+        const connections = stats.connections ?? {}
+        const node = stats.node ?? {}
+        const workers = Array.isArray(stats.workers)
+            ? stats.workers
+            : []
+
+        const workerLines = workers.flatMap((worker, index) => [
+            `Worker ${index + 1} — PID ${worker.pid}`,
+            `  CPU: ${formatarPercentual(worker.cpuPercent)}`,
+            `  RAM: ${formatarMemoria(worker.rssBytes)}`,
+            `  Salas: ${worker.rooms ?? 0}`,
+            ''
+        ])
+
+        sfuMonitorStatus.textContent =
+            'Monitoramento ativo — Azure conectada'
+
+        sfuMonitorData.textContent = [
+            `Atualizado: ${new Date(stats.timestamp).toLocaleTimeString('pt-BR')}`,
+            '',
+            '=== VM AZURE ===',
+            `CPU: ${formatarPercentual(vm.cpuPercent)}`,
+            `vCPUs: ${vm.cpuCount ?? '—'}`,
+            `RAM: ${formatarMemoria(memory.usedBytes)} / ${formatarMemoria(memory.totalBytes)}`,
+            `Uso de RAM: ${formatarPercentual(memory.usagePercent)}`,
+            '',
+            `=== WORKERS MEDIASOUP (${stats.workerCount ?? workers.length}) ===`,
+            ...(workerLines.length
+                ? workerLines
+                : ['Nenhum Worker ativo', '']),
+            '=== NODE.JS ===',
+            `PID: ${node.pid ?? '—'}`,
+            `CPU: ${formatarPercentual(node.cpuPercent)}`,
+            `RAM: ${formatarMemoria(node.rssBytes)}`,
+            `Uptime: ${node.uptimeSeconds ?? 0}s`,
+            '',
+            '=== CONEXÕES ===',
+            `Salas: ${connections.rooms ?? 0}`,
+            `Transmissores: ${connections.publishers ?? 0}`,
+            `Espectadores: ${connections.viewers ?? 0}`,
+            `Transports: ${connections.transports ?? 0}`,
+            `Producers: ${connections.producers ?? 0}`,
+            `Consumers: ${connections.consumers ?? 0}`
+        ].join('\n')
+
+        renderizarDashboardSFU(stats)
+
+        registrarHistoricoSFU(stats)
+
+        sfuMonitorHistory.hidden = false
+
+        renderizarGraficosSFU()
+
+    } catch (error) {
+        if (
+            session !== sfuSession ||
+            !sfuMonitorPanel.open ||
+            closingPage
+        ) return
+
+        if (/sem permiss[aã]o/i.test(error.message)) {
+            sfuMonitorDeniedSession = session
+
+            sfuMonitorDashboard.hidden = true
+            sfuMonitorData.hidden = false
+
+            sfuMonitorStatus.textContent = 'Acesso ao monitoramento não autorizado.'
+
+            sfuMonitorData.textContent = 'Verifique SFU_MONITOR_ADMIN_IDS na Azure.'
+
+        } else {
+            sfuMonitorStatus.textContent = `Erro ao consultar SFU: ${error.message}`
+        }
+
+    } finally {
+        sfuMonitorBusy = false
+    }
+}
+
+function iniciarMonitorSFU() {
+    if (sfuMonitorTimer !== null) return
+
+    void atualizarMonitorSFU()
+
+    sfuMonitorTimer = setInterval(() => {
+        void atualizarMonitorSFU()
+    }, SFU_MONITOR_INTERVAL)
+}
+
+function pararMonitorSFU() {
+    if (sfuMonitorTimer === null) return
+
+    clearInterval(sfuMonitorTimer)
+    sfuMonitorTimer = null
+}
+
+sfuMonitorPanel.addEventListener('toggle', () => {
+    if (sfuMonitorPanel.open) {
+        iniciarMonitorSFU()
+    } else {
+        pararMonitorSFU()
+    }
+})
 
 
 function getCaptureOptions() {
@@ -1488,7 +2085,14 @@ async function switchCaptureSource() {
     }
 }
 
-
+window.addEventListener('resize', () => {
+    if (
+        sfuMonitorPanel.open &&
+        !sfuMonitorHistory.hidden
+    ) {
+        renderizarGraficosSFU()
+    }
+})
 
 connectButton.addEventListener('click', connect)
 startButton.addEventListener('click', startCapture)
@@ -1500,6 +2104,8 @@ switchSourceButton.addEventListener('click',switchCaptureSource)
 
 window.addEventListener('pagehide', () => {
     closingPage = true
+
+    pararMonitorSFU()
 
     clearTimeout(sfuRetryTimer)
     clearTimeout(relayRetryTimer)

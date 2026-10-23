@@ -170,14 +170,18 @@ async function tratarSessaoDemo(req, res) {
 
         sessoes.set(instanceId, sessao);
 
+        let bridgeNotificado = null;
+
         if (novaSessao) {
-            console.log(
-                `[Demo Live] Sessão iniciada: ${instanceId}`
-            );
+            console.log(`[Demo Live] Sessão iniciada: ${instanceId}`);
 
             try {
                 await avisarBlinBlin("start", sessao);
+                bridgeNotificado = true;
+
             } catch (error) {
+                bridgeNotificado = false;
+
                 console.error(
                     "[Demo Live] Falha ao avisar BlinBlin:",
                     error.message
@@ -187,7 +191,8 @@ async function tratarSessaoDemo(req, res) {
 
         return responder(res, 200, {
             ok: true,
-            instanceId
+            instanceId,
+            bridgeNotificado
         });
 
     } catch (error) {

@@ -149,6 +149,64 @@
             <pre id="webrtc-logs"></pre>
         </div>
     </details>
+    <details class="publisher-diagnostics" id="sfu-monitor">
+        <summary>
+            <span>Monitoramento do servidor SFU</span>
+            <span class="diagnostics-hint">
+                Azure · Estatísticas em tempo real
+            </span>
+        </summary>
+
+        <div class="diagnostics-content">
+
+            <p id="sfu-monitor-status" role="status">
+                Aguardando dados do servidor...
+            </p>
+
+            <pre id="sfu-monitor-data">
+                Monitoramento ainda não iniciado.
+            </pre>
+            <div
+                id="sfu-monitor-dashboard"
+                class="sfu-monitor-dashboard"
+                hidden
+            ></div>
+
+            <div id="sfu-monitor-history" class="sfu-monitor-history" hidden>
+
+                <h3>Histórico de desempenho — Últimos 5 minutos</h3>
+
+                <div class="sfu-history-grid">
+
+                    <section class="sfu-history-card">
+                        <h4>CPU da VM (%)</h4>
+                        <canvas id="sfu-chart-vm-cpu"></canvas>
+                        <small>Utilização total dos vCPUs da Azure</small>
+                    </section>
+
+                    <section class="sfu-history-card">
+                        <h4>Memória da VM (%)</h4>
+                        <canvas id="sfu-chart-vm-memory"></canvas>
+                        <small>Memória utilizada considerando MemAvailable</small>
+                    </section>
+
+                    <section class="sfu-history-card">
+                        <h4>CPU dos processos (%)</h4>
+                        <canvas id="sfu-chart-process-cpu"></canvas>
+                        <small>Azul: Node.js · Verde: Workers (soma)</small>
+                    </section>
+
+                    <section class="sfu-history-card">
+                        <h4>Memória dos processos (MiB)</h4>
+                        <canvas id="sfu-chart-process-memory"></canvas>
+                        <small>Azul: Node.js · Verde: Workers (soma)</small>
+                    </section>
+
+                </div>
+            </div>
+
+        </div>
+    </details>
 </main>
 
 
