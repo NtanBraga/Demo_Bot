@@ -89,6 +89,12 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                     NÃO ESTÁ AO VIVO
                 </span>
 
+                <div
+                    id="rtc-viewers-overlay"
+                    aria-label="Espectadores da transmissão"
+                    hidden
+                ></div>
+
                 <div id="rtc-video-toolbar" role="group"
                     aria-label="Controles da transmissão">
 
@@ -190,6 +196,7 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
     const volumeValue = section.querySelector('#rtc-volume-value')
     const fullscreenButton = section.querySelector('#rtc-fullscreen')
     const videoFrame = section.querySelector('#rtc-video-frame')
+    const viewersOverlay = section.querySelector('#rtc-viewers-overlay')
 
     const playerPanel = section.querySelector('#rtc-player-panel')
     const currentStream = section.querySelector('#rtc-current-stream')
@@ -513,6 +520,73 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
 
     }
 
+    function atualizarAvataresPlayer() {
+        viewersOverlay.replaceChildren()
+
+        const stream = latestStreams.find(
+            item => item.id === selectedStreamId
+        )
+
+        if (!stream || leavingStream) {
+            viewersOverlay.hidden = true
+            return
+        }
+
+        const participants = Array.isArray(stream.participants)
+            ? [
+                ...new Map(
+                    stream.participants
+                        .filter(user =>
+                            user &&
+                            typeof user.id === 'string'
+                        )
+                        .map(user => [user.id, user])
+                ).values()
+            ]
+            : []
+
+        const viewerCount = Number.isInteger(stream.viewerCount)
+            ? Math.max(0, stream.viewerCount)
+            : participants.length
+
+        if (viewerCount === 0 && participants.length === 0) {
+            viewersOverlay.hidden = true
+            return
+        }
+
+        const count = document.createElement('span')
+        count.className = 'rtc-viewers-overlay__count'
+
+        count.textContent = viewerCount === 1
+            ? '1 assistindo'
+            : `${viewerCount} assistindo`
+
+        const avatars = document.createElement('div')
+        avatars.className = 'rtc-viewers-overlay__avatars'
+
+        const MAX_AVATARS = 5
+
+        for (const user of participants.slice(0, MAX_AVATARS)) {
+            avatars.appendChild(criarAvatarEspectador(user))
+        }
+
+        const remaining = participants.length - MAX_AVATARS
+
+        if (remaining > 0) {
+            const extra = document.createElement('span')
+
+            extra.className =
+                'rtc-stream-card__avatar rtc-stream-card__avatar--extra'
+
+            extra.textContent = `+${remaining}`
+
+            avatars.appendChild(extra)
+        }
+
+        viewersOverlay.append(count, avatars)
+        viewersOverlay.hidden = false
+    }
+
     function clearRemoteStopPending() {
         if (remoteStopTimer !== null) {
             clearTimeout(remoteStopTimer)
@@ -594,6 +668,8 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         if(Array.isArray(items)){
             latestStreams = items
         }
+
+        atualizarAvataresPlayer()
 
         updateOwnTransmissionState()
 

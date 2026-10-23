@@ -1103,3 +1103,92 @@
         );
     }
 }
+
+
+/* Espectadores no canto do player */
+
+.demo-live-player #rtc-viewers-overlay {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    z-index: 4;
+
+    display: flex;
+    align-items: center;
+    gap: 10px;
+
+    max-width: calc(100% - 28px);
+    padding: 7px 11px;
+
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 30px;
+
+    background: rgba(18, 24, 35, 0.85);
+    backdrop-filter: blur(8px);
+
+    color: #fff;
+
+    pointer-events: none;
+
+    transition:
+        opacity 0.2s ease,
+        visibility 0.2s ease,
+        transform 0.2s ease;
+}
+
+.demo-live-player #rtc-viewers-overlay[hidden] {
+    display: none !important;
+}
+
+.demo-live-player .rtc-viewers-overlay__count {
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    color: #e2e8f0;
+}
+
+.demo-live-player .rtc-viewers-overlay__avatars {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    padding-left: 6px;
+}
+
+.demo-live-player .rtc-viewers-overlay__avatars
+.rtc-stream-card__avatar {
+    border-color: #18202d;
+}
+.demo-live-player #rtc-player-panel.is-playing
+#rtc-video-frame:not(.controls-visible)
+#rtc-viewers-overlay {
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-6px);
+}
+@media (max-width: 580px) {
+
+    .demo-live-player #rtc-viewers-overlay {
+        top: 8px;
+        right: 8px;
+
+        gap: 6px;
+        padding: 5px 8px;
+    }
+
+    .demo-live-player .rtc-viewers-overlay__count {
+        font-size: 10px;
+    }
+
+    .demo-live-player .rtc-viewers-overlay__avatars
+    .rtc-stream-card__avatar {
+        width: 25px;
+        height: 25px;
+        font-size: 10px;
+    }
+
+    .demo-live-player #rtc-live-indicator {
+        top: 47px;
+        left: 8px;
+    }
+}
