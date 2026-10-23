@@ -5,7 +5,7 @@ const APPLICATION_ID = process.env.DEMO_APPLICATION_ID;
 const ACTIVITY_TOKEN = process.env.DEMO_ACTIVITY_BOT_TOKEN;
 const BRIDGE_SECRET = process.env.DEMO_BRIDGE_SECRET;
 
-const BRIDGE_URL = "http://127.0.0.1:3105/demo-live";
+const BRIDGE_URL = process.env.DEMO_BRIDGE_URL || "http://127.0.0.1:3105/demo-live";
 const INTERVALO = 30_000;
 
 const sessoes = new Map();
