@@ -125,7 +125,10 @@ for (const [value, label] of qualityOptions) {
     sfuQualitySelect.appendChild(option)
 }
 
-sfuQualitySelect.value = '1080p30'
+sfuQualitySelect.value = '1080p60'
+
+let lastAppliedQuality = sfuQualitySelect.value
+let changingQuality = false
 
 sfuQualityWrapper.appendChild(sfuQualitySelect)
 
@@ -1006,11 +1009,23 @@ function updateButtons(){
     connectButton.disabled = socket !== null
 
     startButton.disabled = !authenticated || (USE_SFU && !sfuReady) || captureStream !== null || capturing
-    stopButton.disabled = captureStream === null
-    switchSourceButton.disabled = !authenticated || !USE_SFU || !sfuReady || !captureStream || capturing || switchingSource
+    stopButton.disabled = captureStream === null || changingQuality
+    switchSourceButton.disabled = 
+        !authenticated || 
+        !USE_SFU || 
+        !sfuReady || 
+        !captureStream || 
+        capturing || 
+        switchingSource || 
+        changingQuality
 
     sfuCodecSelect.disabled = !sfuReady || captureStream !== null || capturing
-    sfuQualitySelect.disabled = !sfuReady || captureStream !== null || capturing
+    sfuQualitySelect.disabled =
+        !authenticated ||
+        !sfuReady ||
+        capturing ||
+        switchingSource ||
+        changingQuality
 
     if (USE_SFU && sfuReady && sfuSession?.device) {
         const supported = sfuSession.device.sendRtpCapabilities.codecs
@@ -1900,6 +1915,8 @@ async function startCapture(){
 
         captureStream = stream
 
+        lastAppliedQuality = sfuQualitySelect.value
+
         if (USE_SFU) {
             audioMixer = provisionalMixer
             provisionalMixer = null
@@ -2201,6 +2218,88 @@ async function switchCaptureSource() {
     }
 }
 
+async function changeLiveQuality() {
+    const selectedQuality = sfuQualitySelect.value
+
+    if (!captureStream) {
+        lastAppliedQuality = selectedQuality
+        return
+    }
+
+    if (
+        !sfuReady ||
+        !sfuSession ||
+        capturing ||
+        switchingSource ||
+        changingQuality
+    ) {
+        sfuQualitySelect.value = lastAppliedQuality
+        return
+    }
+
+    const stream = captureStream
+    const videoTrack = stream.getVideoTracks()[0]
+
+    if (!videoTrack || videoTrack.readyState !== 'live') {
+        sfuQualitySelect.value = lastAppliedQuality
+        log('Não há uma track de vídeo ativa para alterar.')
+        return
+    }
+
+    const previousConstraints = videoTrack.getConstraints()
+    const previousQuality = lastAppliedQuality
+
+    changingQuality = true
+    updateButtons()
+
+    try {
+        const newConstraints = getCaptureOptions().video
+
+        await videoTrack.applyConstraints(newConstraints)
+
+        if (
+            captureStream !== stream ||
+            videoTrack.readyState !== 'live'
+        ) {
+            throw new Error('A captura mudou durante a alteração.')
+        }
+
+        lastAppliedQuality = selectedQuality
+
+        const settings = videoTrack.getSettings()
+
+        log(
+            `Qualidade alterada: ${previousQuality} → ${selectedQuality}. ` +
+            `Captura: ${settings.width}x${settings.height}, ` +
+            `FPS configurado: ${settings.frameRate ?? 'n/d'}.`
+        )
+
+    } catch (error) {
+        sfuQualitySelect.value = previousQuality
+
+        if (
+            captureStream === stream &&
+            videoTrack.readyState === 'live'
+        ) {
+            try {
+                await videoTrack.applyConstraints(previousConstraints)
+            } catch (rollbackError) {
+                log(
+                    'Não foi possível restaurar a qualidade anterior: ' +
+                    rollbackError.message
+                )
+            }
+        }
+
+        log('Falha ao alterar qualidade: ' + error.message)
+
+    } finally {
+        changingQuality = false
+        updateButtons()
+    }
+}
+
+
 window.addEventListener('resize', () => {
     if (
         sfuMonitorPanel.open &&
@@ -2217,6 +2316,8 @@ stopButton.addEventListener('click', () => {
     stopCapture()
 })
 switchSourceButton.addEventListener('click',switchCaptureSource)
+
+sfuQualitySelect.addEventListener('change', changeLiveQuality)
 
 window.addEventListener('pagehide', () => {
     closingPage = true
