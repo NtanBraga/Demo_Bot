@@ -100,6 +100,59 @@ audioCaptureStatus.insertAdjacentElement(
     sfuCodecWrapper
 )
 
+const sfuQualityWrapper = document.createElement('label')
+
+sfuQualityWrapper.textContent = 'Qualidade da transmissão: '
+
+const sfuQualitySelect = document.createElement('select')
+
+sfuQualitySelect.id = 'publisher-sfu-quality'
+
+const qualityOptions = [
+    ['720p30', '720p - 30 FPS'],
+    ['720p60', '720p - 60 FPS'],
+    ['1080p30', '1080p - 30 FPS'],
+    ['1080p60', '1080p - 60 FPS'],
+    ['original', 'Resolução da tela']
+]
+
+for (const [value, label] of qualityOptions) {
+    const option = document.createElement('option')
+
+    option.value = value
+    option.textContent = label
+
+    sfuQualitySelect.appendChild(option)
+}
+
+sfuQualitySelect.value = '1080p30'
+
+sfuQualityWrapper.appendChild(sfuQualitySelect)
+
+sfuQualityWrapper.hidden = !USE_SFU
+
+sfuCodecWrapper.insertAdjacentElement(
+    'afterend',
+    sfuQualityWrapper
+)
+
+for (const wrapper of [sfuCodecWrapper, sfuQualityWrapper]) {
+    wrapper.style.display = USE_SFU ? 'grid' : 'none'
+
+    wrapper.style.gridTemplateColumns =
+        'minmax(0, 1fr) minmax(140px, 45%)'
+
+    wrapper.style.alignItems = 'center'
+    wrapper.style.columnGap = '12px'
+
+    wrapper.style.width = '100%'
+    wrapper.style.maxWidth = '480px'
+    wrapper.style.marginBottom = '10px'
+
+    wrapper.querySelector('select').style.width = '100%'
+}
+
+
 const sfuStatsBox = document.createElement('pre')
 
 sfuStatsBox.id = 'publisher-sfu-stats'
@@ -705,13 +758,73 @@ sfuMonitorPanel.addEventListener('toggle', () => {
 })
 
 
+const QUALITY_CAPTURE_PRESETS = {
+    '720p30': {
+        width: 1280,
+        height: 720,
+        fps: 30
+    },
+
+    '720p60': {
+        width: 1280,
+        height: 720,
+        fps: 60
+    },
+
+    '1080p30': {
+        width: 1920,
+        height: 1080,
+        fps: 30
+    },
+
+    '1080p60': {
+        width: 1920,
+        height: 1080,
+        fps: 60
+    }
+}
+
+const QUALITY_MAX_BITRATE = {
+    '720p30': 4_000_000,
+    '720p60': 6_000_000,
+    '1080p30': 8_000_000,
+    '1080p60': 12_000_000,
+    'original': 20_000_000
+}
+
+function getSelectedMaxBitrate() {
+    return QUALITY_MAX_BITRATE[sfuQualitySelect.value]
+        ?? 8_000_000
+}
+
 function getCaptureOptions() {
+    const selectedQuality = sfuQualitySelect.value
+
+    const preset = QUALITY_CAPTURE_PRESETS[selectedQuality]
+
+    const fps = preset?.fps ?? 60
+
+    const video = {
+        frameRate: {
+            ideal: fps,
+            max: fps
+        }
+    }
+
+    if (preset) {
+        video.width = {
+            ideal: preset.width,
+            max: preset.width
+        }
+
+        video.height = {
+            ideal: preset.height,
+            max: preset.height
+        }
+    }
+
     return {
-        video: {
-            frameRate: { ideal: 30, max: 30 },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
-        },
+        video,
         audio: true,
         systemAudio: 'include',
         windowAudio: 'window'
@@ -897,6 +1010,7 @@ function updateButtons(){
     switchSourceButton.disabled = !authenticated || !USE_SFU || !sfuReady || !captureStream || capturing || switchingSource
 
     sfuCodecSelect.disabled = !sfuReady || captureStream !== null || capturing
+    sfuQualitySelect.disabled = !sfuReady || captureStream !== null || capturing
 
     if (USE_SFU && sfuReady && sfuSession?.device) {
         const supported = sfuSession.device.sendRtpCapabilities.codecs
@@ -1491,10 +1605,7 @@ async function handleMessage(message){
                 ) {
                     log('SFU: restaurando a transmissão existente.')
 
-                    await session.publish(
-                        getPublicationStream(streamToRestore),
-                        sfuCodecSelect.value
-                    )
+                    await session.publish(getPublicationStream(streamToRestore),sfuCodecSelect.value,getSelectedMaxBitrate())
 
                     if (
                         sfuSession !== session ||
@@ -1829,8 +1940,12 @@ async function startCapture(){
         const audioTracks = stream.getAudioTracks()
         const settings = videoTrack.getSettings()
 
-        log(`Captura iniciada: ` + `${settings.width}x${settings.height},` 
-            + `áudio: ${audioTracks.length ? 'sim' : 'não'}.`)
+        log(
+            `Qualidade selecionada: ${sfuQualitySelect.value}, ` +
+            `captura: ${settings.width}x${settings.height}, ` +
+            `FPS configurado: ${settings.frameRate ?? 'n/d'}, ` +
+            `áudio: ${audioTracks.length ? 'sim' : 'não'}.`
+        )
 
         if (audioTracks.length === 0) {
             log('O navegador não forneceu áudio. O mixer enviará silêncio.')
@@ -1843,7 +1958,7 @@ async function startCapture(){
                 throw new Error('SFU ainda nao conectado')
             }
 
-            await session.publish(getPublicationStream(stream), sfuCodecSelect.value)
+            await session.publish(getPublicationStream(stream),sfuCodecSelect.value,getSelectedMaxBitrate())
 
             if (
                 captureStream !== stream ||

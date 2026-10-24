@@ -266,7 +266,7 @@ export class SfuSession {
         }
     }
 
-    publish(stream, preferredCodec = 'av1') {
+    publish(stream, preferredCodec = 'av1', maxVideoBitrate = 8_000_000) {
         return this.enqueueMedia(async () => {
             if (this.role !== 'publisher' || !this.transport) {
                 throw new Error('SFU publisher nao preparado')
@@ -293,7 +293,7 @@ export class SfuSession {
                 track: videoTrack,
                 codec,
                 encodings: [
-                    { maxBitrate: 8_000_000 }
+                    { maxBitrate: maxVideoBitrate }
                 ],
                 stopTracks: false
             })
