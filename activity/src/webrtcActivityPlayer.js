@@ -1432,6 +1432,73 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
         }
     }
 
+    async function recuperarVideoSFU(session, producerId) {
+        const stream = remoteStream
+
+        if (
+            !stream ||
+            sfuSession !== session ||
+            !producerId
+        ) return
+
+        try {
+            const consumer = await session.replaceVideoConsumer(producerId)
+
+            if (
+                sfuSession !== session ||
+                remoteStream !== stream
+            ) return
+
+            for (const track of stream.getVideoTracks()) {
+                if (track !== consumer.track) {
+                    stream.removeTrack(track)
+                }
+            }
+
+            if (!stream.getVideoTracks().includes(consumer.track)) {
+                stream.addTrack(consumer.track)
+            }
+
+            const codec = consumer.rtpParameters.codecs.find(item =>
+                item.mimeType.toLowerCase().startsWith('video/') &&
+                item.mimeType.toLowerCase() !== 'video/rtx'
+            )
+
+            codecCurrent.textContent =
+                'Codec recebido: ' +
+                (codec?.mimeType ?? 'desconhecido')
+
+            log(`SFU: novo vídeo recebido (${codec?.mimeType ?? 'desconhecido'}).`)
+
+            statusRTC.textContent = 'Vídeo recuperado na mesma sessão SFU.'
+
+            updateButtons()
+
+            const iniciou = await tentarReproduzirVideo()
+
+            if (
+                iniciou &&
+                sfuSession === session &&
+                remoteStream === stream
+            ) {
+                setPlayerState('live')
+            }
+
+        } catch (error) {
+            if (
+                sfuSession !== session ||
+                remoteStream !== stream
+            ) return
+
+            log('SFU: falha ao recuperar vídeo: ' + error.message)
+
+            closePeer()
+            setPlayerState('reconnecting')
+            scheduleSfuRetry()
+        }
+    }
+
+
     function scheduleSfuRetry() {
         if (
             !authenticated ||
@@ -2007,16 +2074,44 @@ export function montarPlayerWebRTC(container, clientId, obterTicketDiscord, disc
                             scheduleSfuRetry()
                         }
 
+                        if (
+                            event.event === 'producer-available' &&
+                            event.kind === 'video'
+                        ) {
+                            void recuperarVideoSFU(session, event.producerId)
+                            return
+                        }
+
                         if (event.event === 'producer-closed') {
                             log(`SFU: Producer ${event.kind} encerrado.`)
 
                             if (event.kind === 'video') {
-                                closePeer()
+                                const videoConsumer = session.consumers.get('video')
+
+                                if (
+                                    videoConsumer &&
+                                    event.producerId &&
+                                    videoConsumer.producerId !== event.producerId
+                                ) {
+                                    return
+                                }
+
+                                if (videoConsumer) {
+                                    remoteStream?.removeTrack(videoConsumer.track)
+
+                                    videoConsumer.close()
+                                    session.consumers.delete('video')
+                                }
+
+                                codecCurrent.textContent =
+                                    'Codec recebido: aguardando novo vídeo.'
+
                                 setPlayerState('waiting')
 
                                 statusRTC.textContent =
-                                    'Aguardando o transmissor retomar o vídeo.'
+                                    'Atualizando o vídeo. Áudio mantido.'
 
+                                updateButtons()
                                 return
                             }
 

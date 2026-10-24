@@ -91,6 +91,9 @@ for (const codec of ['h264', 'vp8', 'av1']) {
 
 sfuCodecSelect.value = 'av1'
 
+let lastAppliedCodec = sfuCodecSelect.value
+let changingCodec = false
+
 sfuCodecWrapper.appendChild(sfuCodecSelect)
 
 sfuCodecWrapper.hidden = !USE_SFU
@@ -1009,7 +1012,7 @@ function updateButtons(){
     connectButton.disabled = socket !== null
 
     startButton.disabled = !authenticated || (USE_SFU && !sfuReady) || captureStream !== null || capturing
-    stopButton.disabled = captureStream === null || changingQuality
+    stopButton.disabled = captureStream === null || changingQuality || changingCodec
     switchSourceButton.disabled = 
         !authenticated || 
         !USE_SFU || 
@@ -1017,15 +1020,23 @@ function updateButtons(){
         !captureStream || 
         capturing || 
         switchingSource || 
-        changingQuality
+        changingQuality ||
+        changingCodec
 
-    sfuCodecSelect.disabled = !sfuReady || captureStream !== null || capturing
+    sfuCodecSelect.disabled =
+        !authenticated ||
+        !sfuReady ||
+        capturing ||
+        switchingSource ||
+        changingQuality ||
+        changingCodec
     sfuQualitySelect.disabled =
         !authenticated ||
         !sfuReady ||
         capturing ||
         switchingSource ||
-        changingQuality
+        changingQuality ||
+        changingCodec
 
     if (USE_SFU && sfuReady && sfuSession?.device) {
         const supported = sfuSession.device.sendRtpCapabilities.codecs
@@ -1917,6 +1928,8 @@ async function startCapture(){
 
         lastAppliedQuality = sfuQualitySelect.value
 
+        lastAppliedCodec = sfuCodecSelect.value
+
         if (USE_SFU) {
             audioMixer = provisionalMixer
             provisionalMixer = null
@@ -2049,7 +2062,8 @@ async function switchCaptureSource() {
         !sfuSession ||
         !audioMixer ||
         capturing ||
-        switchingSource
+        switchingSource ||
+        changingCodec
     ) return
 
     const previousStream = captureStream
@@ -2231,7 +2245,8 @@ async function changeLiveQuality() {
         !sfuSession ||
         capturing ||
         switchingSource ||
-        changingQuality
+        changingQuality ||
+        changingCodec
     ) {
         sfuQualitySelect.value = lastAppliedQuality
         return
@@ -2309,6 +2324,92 @@ async function changeLiveQuality() {
     }
 }
 
+async function changeLiveCodec() {
+    const selectedCodec = sfuCodecSelect.value
+
+    if (!captureStream) {
+        lastAppliedCodec = selectedCodec
+        return
+    }
+
+    if (
+        !sfuReady ||
+        !sfuSession ||
+        capturing ||
+        switchingSource ||
+        changingQuality ||
+        changingCodec
+    ) {
+        sfuCodecSelect.value = lastAppliedCodec
+        return
+    }
+
+    const previousCodec = lastAppliedCodec
+
+    if (selectedCodec === previousCodec) return
+
+    const stream = captureStream
+    const session = sfuSession
+    const videoTrack = stream.getVideoTracks()[0]
+
+    if (!videoTrack || videoTrack.readyState !== 'live') {
+        sfuCodecSelect.value = previousCodec
+        log('Não existe vídeo ativo para trocar o codec.')
+        return
+    }
+
+    const previousVideoId = session.producers.get('video')?.id
+    const previousAudioId = session.producers.get('audio')?.id
+
+    changingCodec = true
+    updateButtons()
+
+    try {
+        log(
+            `Alterando codec: ${previousCodec.toUpperCase()} → ` +
+            `${selectedCodec.toUpperCase()}...`
+        )
+
+        const newVideoId = await session.changeVideoCodec(
+            selectedCodec,
+            previousCodec,
+            getSelectedMaxBitrate()
+        )
+
+        if (
+            captureStream !== stream ||
+            sfuSession !== session ||
+            session.closed
+        ) {
+            throw new Error('A sessão mudou durante a troca.')
+        }
+
+        lastAppliedCodec = selectedCodec
+
+        const currentAudioId = session.producers.get('audio')?.id
+
+        log(`Codec alterado para ${selectedCodec.toUpperCase()}.`)
+
+        log(
+            'Producer de vídeo substituído: ' +
+            (previousVideoId !== newVideoId)
+        )
+
+        log(
+            'Producer de áudio preservado: ' +
+            (previousAudioId === currentAudioId)
+        )
+
+    } catch (error) {
+        sfuCodecSelect.value = previousCodec
+
+        log('Falha ao alterar codec: ' + error.message)
+
+    } finally {
+        changingCodec = false
+        updateButtons()
+    }
+}
 
 window.addEventListener('resize', () => {
     if (
@@ -2328,6 +2429,8 @@ stopButton.addEventListener('click', () => {
 switchSourceButton.addEventListener('click',switchCaptureSource)
 
 sfuQualitySelect.addEventListener('change', changeLiveQuality)
+
+sfuCodecSelect.addEventListener('change', changeLiveCodec)
 
 window.addEventListener('pagehide', () => {
     closingPage = true

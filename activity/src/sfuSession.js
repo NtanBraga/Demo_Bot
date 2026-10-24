@@ -340,7 +340,88 @@ export class SfuSession {
         })
     }
 
-    
+    changeVideoCodec(nextCodecName, previousCodecName, maxBitrate) {
+        return this.enqueueMedia(async () => {
+            if (this.role !== 'publisher' || !this.transport) {
+                throw new Error('SFU publisher não preparado.')
+            }
+
+            const previousProducer = this.producers.get('video')
+            const track = previousProducer?.track
+
+            if (
+                !previousProducer ||
+                previousProducer.closed ||
+                !track ||
+                track.readyState !== 'live'
+            ) {
+                throw new Error('Producer de vídeo indisponível.')
+            }
+
+            const findCodec = name =>
+                this.device.sendRtpCapabilities.codecs.find(codec =>
+                    codec.mimeType.toLowerCase() === `video/${name}`
+                )
+
+            const nextCodec = findCodec(nextCodecName)
+            const previousCodec = findCodec(previousCodecName)
+
+            if (!nextCodec || !previousCodec) {
+                throw new Error('Codec não suportado pelo dispositivo.')
+            }
+
+            if (
+                !Number.isSafeInteger(maxBitrate) ||
+                maxBitrate <= 0
+            ) {
+                throw new Error('Bitrate inválido.')
+            }
+
+            if (nextCodecName === previousCodecName) {
+                return previousProducer.id
+            }
+
+            const produceVideo = codec => this.transport.produce({
+                track,
+                codec,
+                encodings: [{ maxBitrate }],
+                stopTracks: false
+            })
+
+            await this.request('stop-video')
+
+            previousProducer.close()
+            this.producers.delete('video')
+
+            try {
+                const nextProducer = await produceVideo(nextCodec)
+
+                this.producers.set('video', nextProducer)
+
+                return nextProducer.id
+
+            } catch (error) {
+                try {
+                    const restoredProducer = await produceVideo(previousCodec)
+
+                    this.producers.set('video', restoredProducer)
+
+                } catch (restoreError) {
+                    throw new Error(
+                        `Falha ao trocar codec: ${error.message}. ` +
+                        `Falha ao restaurar: ${restoreError.message}`
+                    )
+                }
+
+                throw new Error(
+                    `Falha ao trocar codec: ${error.message}. ` +
+                    'O codec anterior foi restaurado.'
+                )
+            }
+        })
+    }
+
+
     replaceVideoTrack(track) {
         return this.enqueueMedia(async () => {
             if (this.role !== 'publisher' || !this.transport) {
@@ -417,6 +498,60 @@ export class SfuSession {
 
         return stream
     }
+
+    replaceVideoConsumer(expectedProducerId) {
+        return this.enqueueMedia(async () => {
+            if (
+                this.role !== 'viewer' ||
+                !this.transport ||
+                !expectedProducerId
+            ) {
+                throw new Error('Não é possível recuperar o vídeo.')
+            }
+
+            const previous = this.consumers.get('video')
+
+            if (
+                previous &&
+                !previous.closed &&
+                previous.producerId === expectedProducerId
+            ) {
+                return previous
+            }
+
+            if (previous) {
+                previous.close()
+                this.consumers.delete('video')
+            }
+
+            const params = await this.request('consume', {
+                kind: 'video',
+                transportId: this.transport.id,
+                rtpCapabilities: this.device.recvRtpCapabilities
+            })
+
+            if (params.producerId !== expectedProducerId) {
+                throw new Error('O Producer de vídeo mudou durante a recuperação.')
+            }
+
+            const consumer = await this.transport.consume(params)
+
+            this.consumers.set('video', consumer)
+
+            try {
+                await this.request('resume-consumer', {
+                    consumerId: consumer.id
+                })
+            } catch (error) {
+                consumer.close()
+                this.consumers.delete('video')
+                throw error
+            }
+
+            return consumer
+        })
+    }
+
 
     stopPublishing() {
         return this.enqueueMedia(async () => {
