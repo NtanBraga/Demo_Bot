@@ -291,9 +291,10 @@ function renderizarDashboardSFU(stats) {
 
     const workerCards = workers.map((worker, index) =>
         criarCartaoSFU(
-            `Worker ${index + 1} — PID ${worker.pid}`,
+            `Worker ${worker.index != null ? worker.index + 1 : index + 1} — PID ${worker.pid}`,
             formatarPercentual(worker.cpuPercent),
             worker.cpuPercent,
+            `UDP ${worker.udpPort ?? '—'} · ` +
             `RAM: ${formatarMemoria(worker.rssBytes)} · ` +
             `Salas: ${worker.rooms ?? 0}`
         )
