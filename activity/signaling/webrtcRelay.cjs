@@ -51,14 +51,21 @@ const viewers = new Map()
 const streams = new Map()
 
 function getStreamList(requester = null){
-    const canSeeIdentities = requester?.role === 'viewer' && Boolean(requester.discordUser)
+    const viewerCanSeeIdentities = requester?.role === 'viewer' && Boolean(requester.discordUser)
 
     return [...streams.values()].map(stream => {
+        const publisherCanSeeOwnViewers =
+            requester?.role === 'publisher' &&
+            requester.streamId === stream.id &&
+            stream.publisher === requester &&
+            Boolean(requester.discordUser)
+
+        const canSeeParticipants = viewerCanSeeIdentities || publisherCanSeeOwnViewers
         const watching = [...viewers.values()].filter(
             viewer => viewer.watchingStreamId === stream.id
         )
 
-        const participants = canSeeIdentities
+        const participants = canSeeParticipants
             ? watching
                 .filter(viewer => viewer.discordUser)
                 .map(viewer => ({
@@ -75,7 +82,7 @@ function getStreamList(requester = null){
             status: stream.status,
             registeredAt: stream.registeredAt,
             startedAt: stream.startedAt,
-            owner: canSeeIdentities
+            owner: viewerCanSeeIdentities
                 ? stream.owner
                 : null,
             viewerCount: watching.length,
@@ -84,11 +91,18 @@ function getStreamList(requester = null){
     })
 }
 
-function broadcastStreamList(){
-    for(const viewer of viewers.values()){
+function broadcastStreamList() {
+    for (const viewer of viewers.values()) {
         send(viewer, {
             type: 'streams:snapshot',
             streams: getStreamList(viewer)
+        })
+    }
+
+    for (const publisher of publishers.values()) {
+        send(publisher, {
+            type: 'streams:snapshot',
+            streams: getStreamList(publisher)
         })
     }
 }

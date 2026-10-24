@@ -8,6 +8,8 @@ const startButton = document.querySelector('#start-webrtc');
 const stopButton = document.querySelector('#stop-webrtc');
 const audioCaptureStatus = document.querySelector('#audio-capture-status');
 const preview = document.querySelector('#preview-webrtc');
+const publisherViewerCount = document.querySelector('#publisher-viewer-count')
+const publisherViewerAvatars = document.querySelector('#publisher-viewer-avatars')
 const statusRTC = document.querySelector('#webrtc-status');
 const logBox = document.querySelector('#webrtc-logs');
 const sfuMonitorPanel = document.querySelector('#sfu-monitor')
@@ -204,6 +206,68 @@ function formatarMemoria(bytes) {
     return `${(bytes / mib).toFixed(1)} MiB`
 }
 
+function updatePublisherViewers(stream) {
+    const participants = Array.isArray(stream?.participants)
+        ? [...new Map(
+            stream.participants
+                .filter(user => user && typeof user.id === 'string')
+                .map(user => [user.id, user])
+        ).values()]
+        : []
+
+    const count = Number.isInteger(stream?.viewerCount)
+        ? Math.max(0, stream.viewerCount)
+        : participants.length
+
+    publisherViewerCount.textContent =
+        `${count} assistindo`
+
+    publisherViewerAvatars.replaceChildren()
+
+    const MAX_AVATARS = 5
+
+    for (const user of participants.slice(0, MAX_AVATARS)) {
+        const name = user.global_name || user.username || 'Espectador'
+
+        const avatar = document.createElement('span')
+        avatar.className = 'publisher-viewer-avatar'
+        avatar.title = name
+        avatar.setAttribute('role', 'img')
+        avatar.setAttribute('aria-label', name)
+        avatar.textContent = name.charAt(0).toUpperCase() || '?'
+
+        const validId = /^\d{17,20}$/.test(user.id)
+        const validAvatar =
+            typeof user.avatar === 'string' &&
+            /^[a-zA-Z0-9_]+$/.test(user.avatar)
+
+        if (validId && validAvatar) {
+            const image = document.createElement('img')
+
+            image.src =
+                `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.webp?size=64`
+
+            image.alt = ''
+            image.loading = 'lazy'
+            image.decoding = 'async'
+            image.onerror = () => image.remove()
+
+            avatar.appendChild(image)
+        }
+
+        publisherViewerAvatars.appendChild(avatar)
+    }
+
+    const remaining = participants.length - MAX_AVATARS
+
+    if (remaining > 0) {
+        const extra = document.createElement('span')
+        extra.className = 'publisher-viewer-avatar'
+        extra.textContent = `+${remaining}`
+
+        publisherViewerAvatars.appendChild(extra)
+    }
+}
 
 function criarCartaoSFU(label, value, percent = null, detail = '') {
     const card = document.createElement('article')
@@ -1678,15 +1742,19 @@ async function handleMessage(message){
                 ? message.streams
                 : []
 
-            log(`Catálogo: ${streams.length} transmissão(ões) registrada(s).`)
+            const ownStream = streams.find(
+                stream => stream.id === publisherStreamId
+            )
 
-            for(const stream of streams){
-                log(
-                    `Transmissão ${stream.id?.slice(0, 8)}: ` + 
-                    `${stream.status}` +
-                    (stream.startedAt ? ` (iniciada em ${stream.startedAt})` : '')
-                )
-            }
+            console.log('[VIEWERS DEBUG]', {
+                encontrouTransmissao: !!ownStream,
+                espectadores: ownStream?.viewerCount,
+                participantes: ownStream?.participants?.length,
+                comFoto: ownStream?.participants?.filter(user => !!user.avatar).length
+            })
+
+            updatePublisherViewers(ownStream)
+
             break
         }
         case 'webrtc:codec-request': {
@@ -1868,6 +1936,8 @@ function connect(){
         authenticated = false
         iceServers = []
         publisherStreamId = null
+
+        updatePublisherViewers(null)
 
         viewers.clear()
         viewerCodecPreferences.clear()

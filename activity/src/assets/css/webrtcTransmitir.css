@@ -601,3 +601,50 @@ select:focus-visible {
 .sfu-events-list li[data-level="error"] {
     border-left-color: #ef4444;
 }
+.preview-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.publisher-viewers {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    white-space: nowrap;
+    font-size: 13px;
+}
+
+.publisher-viewer-avatars {
+    display: flex;
+    align-items: center;
+    padding-left: 6px;
+}
+
+.publisher-viewer-avatar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    margin-left: -6px;
+    border-radius: 50%;
+    border: 2px solid #171c2b;
+    background: #5865f2;
+    color: white;
+    font-size: 11px;
+    font-weight: 600;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.publisher-viewer-avatar img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
