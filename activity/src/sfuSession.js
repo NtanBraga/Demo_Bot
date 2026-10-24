@@ -316,8 +316,32 @@ export class SfuSession {
         })
     }
 
+    setVideoMaxBitrate(maxBitrate) {
+        return this.enqueueMedia(async () => {
+            if (
+                this.role !== 'publisher' ||
+                !Number.isSafeInteger(maxBitrate) ||
+                maxBitrate <= 0
+            ) {
+                throw new Error('Bitrate de vídeo inválido.')
+            }
+
+            const producer = this.producers.get('video')
+
+            if (!producer || producer.closed) {
+                throw new Error('Producer de vídeo indisponível.')
+            }
+
+            await producer.setRtpEncodingParameters({
+                maxBitrate
+            })
+
+            return producer.id
+        })
+    }
+
     
-        replaceVideoTrack(track) {
+    replaceVideoTrack(track) {
         return this.enqueueMedia(async () => {
             if (this.role !== 'publisher' || !this.transport) {
                 throw new Error('SFU publisher não preparado.')

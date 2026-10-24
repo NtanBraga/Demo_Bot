@@ -2249,6 +2249,14 @@ async function changeLiveQuality() {
     const previousConstraints = videoTrack.getConstraints()
     const previousQuality = lastAppliedQuality
 
+    const session = sfuSession
+
+    const previousBitrate = QUALITY_MAX_BITRATE[previousQuality] ?? 8_000_000
+
+    const selectedBitrate = getSelectedMaxBitrate()
+
+    let bitrateUpdateAttempted = false
+
     changingQuality = true
     updateButtons()
 
@@ -2259,10 +2267,17 @@ async function changeLiveQuality() {
 
         if (
             captureStream !== stream ||
+            sfuSession !== session ||
+            !sfuReady ||
+            session.closed ||
             videoTrack.readyState !== 'live'
         ) {
-            throw new Error('A captura mudou durante a alteração.')
+            throw new Error('A captura ou sessão mudou durante a alteração.')
         }
+
+        bitrateUpdateAttempted = true
+
+        await session.setVideoMaxBitrate(selectedBitrate)
 
         lastAppliedQuality = selectedQuality
 
@@ -2271,23 +2286,18 @@ async function changeLiveQuality() {
         log(
             `Qualidade alterada: ${previousQuality} → ${selectedQuality}. ` +
             `Captura: ${settings.width}x${settings.height}, ` +
-            `FPS configurado: ${settings.frameRate ?? 'n/d'}.`
+            `FPS configurado: ${settings.frameRate ?? 'n/d'}, ` +
+            `bitrate máximo: ${(selectedBitrate / 1_000_000).toFixed(1)} Mbps.`
         )
 
     } catch (error) {
         sfuQualitySelect.value = previousQuality
 
-        if (
-            captureStream === stream &&
-            videoTrack.readyState === 'live'
-        ) {
+        if (bitrateUpdateAttempted && sfuSession === session && !session.closed) {
             try {
-                await videoTrack.applyConstraints(previousConstraints)
+                await session.setVideoMaxBitrate(previousBitrate)
             } catch (rollbackError) {
-                log(
-                    'Não foi possível restaurar a qualidade anterior: ' +
-                    rollbackError.message
-                )
+                log('Não foi possível restaurar a qualidade anterior: ' + rollbackError.message)
             }
         }
 
